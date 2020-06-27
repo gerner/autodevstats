@@ -1,0 +1,701 @@
+#!/bin/bash
+
+#allow passing some environment vairables to override some automated steps
+if [ -z "$DATADIR" ]; then
+    DATADIR=""
+fi
+
+if [ -z "$ORIGIN_URL" ]; then
+    ORIGIN_URL=""
+fi
+
+if [ -z "$DEFAULT_BRANCH" ]; then
+    DEFAULT_BRANCH=""
+fi
+
+set -eu -o pipefail
+
+PR_SAMPLESIZE=250
+MAX_ALL_PR_PAGES=20
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+echo "this tool requires several other tools to be installed."
+echo "if they are not the dependency check that follows will fail."
+echo "see README.md in the same folder as statstool for details."
+echo
+echo "checking for dependencies..."
+echo "checking for curl..."
+curl --version | grep 'curl 7\.[0-9]'
+echo "checking for git..."
+git --version | grep 'git version [0-9]'
+echo "checking for awk..."
+gawk --version | grep 'GNU Awk [0-9]'
+echo "checking for join..."
+join --version | grep 'join (GNU coreutils) [0-9]'
+echo "checking for pv..."
+pv --version | grep 'pv [0-9]'
+echo "checking for ag..."
+ag --version | grep 'ag version [0-9]'
+echo "dependencies look good"
+echo
+
+echo "we need to gather some data before we can start computing some stats"
+echo "first we'll process some local commit data using things like git log and git show"
+echo "second we'll download some data from the GitHub like pulls, issues and comments"
+echo "we are only going to read data from your repo and GitHub"
+echo "all of this can take 15-30 minutes, so sit back and relax"
+echo
+
+#if we aren't just computing stats on a predfined datadir
+if [ -z "${DATADIR}" ]; then
+    #get to toplevel of the repo which some steps below assume we are at
+    cd $(git rev-parse --show-toplevel)
+
+    ORIGIN_REMOTE="origin"
+
+    if [ -z "$ORIGIN_URL" ]; then
+        #try to autodetect the github repo
+        echo "autodetecting the origin remote url"
+        echo
+
+        ORIGIN_URL="$(git config --get-regex remote.${ORIGIN_REMOTE}.url | gawk '{print $2}')" || true
+
+        if [ -z "$ORIGIN_URL" ] || ! echo "$ORIGIN_URL" | grep -E '^(git@|https:\/\/)github.com[:\/]([^\/]*\/[^\/]*).git$' > /dev/null; then
+            echo "it looks like you don't have an origin remote, or it's not pointing to a github repository."
+            echo "you can provide your own github repository, check out the README"
+            exit 1
+        fi
+    else
+        #let the user provide their own origin url
+        echo "using provided origin url ${ORIGIN_URL}"
+        echo
+
+        if ! echo "$ORIGIN_URL" | grep -E '^(git@|https:\/\/)github.com[:\/]([^\/]*\/[^\/]*).git$' > /dev/null; then
+            echo "it looks like the origin url you provided (${ORIGIN_URL}) isn't a github repository url."
+            echo "check the README.md or contact AutoDev folks for more assistance."
+            exit 1
+        fi
+
+    fi
+
+    REPO=$(echo "$ORIGIN_URL" | sed -E '/^(git@|https:\/\/)github.com[:\/]/!{q1}; {s/.*github.com[:\/]([^\/]*\/[^\/]*).git$/\1/}')
+
+    echo "using remote url ${ORIGIN_URL}"
+    echo "this corresponds to the github repository at https://github.com/${REPO}"
+    echo "this is the repository whose pull requests and issues we'll analyze"
+    echo
+
+    REPO_FNSAFE=$(echo "$REPO" | sed 's/\//_/')
+    DATADIR=$(mktemp --directory --tmpdir autodevstats.${REPO_FNSAFE}.XXXXXXXXXX)
+
+    echo "we'll write data to ${DATADIR}"
+    echo
+
+    echo "checking access to github for this repo..."
+    REPO_URL="https://api.github.com/repos/${REPO}"
+    curl -L --compressed -s -H "Authorization: token ${GITHUB_TOKEN}" "${REPO_URL}" > ${DATADIR}/repo
+    if ! cat ${DATADIR}/repo | jq '.full_name' | grep ${REPO} > /dev/null; then
+        echo "no access to ${REPO_URL}"
+        echo "check that your access token has access to the repos scope"
+        echo "see GitHub's documentation here: https://help.github.com/en/github/authenticating-to-github/creating-a-personal-access-token-for-the-command-line"
+        echo "we need the \"repo\" top-level scope as described in the tutorial"
+        exit 1
+    fi
+    echo "access to github looks good."
+    echo
+
+    #figure out the default branch
+    if [ -z "$DEFAULT_BRANCH" ]; then
+        echo "autodtecting default branch from github configuration..."
+        echo
+
+        DEFAULT_BRANCH=$(cat ${DATADIR}/repo | jq -r '.default_branch')
+
+        #TODO: check that default branch is tracked by $REPO
+        implicated_remote=$(git config --get-regex branch.${DEFAULT_BRANCH}.remote | gawk '{print $2}') || true
+        if ! git config --get-regex remote.${implicated_remote}.url | grep $REPO > /dev/null; then
+            echo "it appears that ${DEFAULT_BRANCH} is not tracked by the github repository ${REPO}"
+            echo "if you really want to proceed with analysis, you can override both ORIGIN_URL and DEFAULT_BRANCH and we won't check for this. see the README for more information"
+            echo
+            exit 1
+        fi
+    else
+        echo "using provided default branch ${DEFAULT_BRANCH}"
+        echo
+    fi
+
+    echo "default branch is ${DEFAULT_BRANCH}"
+    echo "this is the branch whose history we'll process for merges and pulls"
+    echo
+
+    if ! git branch | grep "$DEFAULT_BRANCH" > /dev/null; then
+        echo "you don't appear to have a branch called ${DEFAULT_BRANCH}"
+        echo "we can't proceed without the default branch checked out"
+        echo "perhaps you need to run git fetch ${ORIGIN_REMOTE} ${DEFAULT_BRANCH}?"
+        exit 1
+    fi
+
+    echo "preparing code history..."
+    starttime=$(date +%s)
+    DATADIR=${DATADIR} DEFAULT_BRANCH=${DEFAULT_BRANCH} FILE_EXCLUDE_PATHS=${DIR}/excludefiles.regex ${DIR}/build_features.sh
+    echo "done preparing code history in $(( $(date +%s) - ${starttime}))s."
+    echo
+
+    echo "preparing commit messages..."
+    git log "${DEFAULT_BRANCH}" --first-parent --format='__commit__ %H%x0A%B' > ${DATADIR}/commit_messages
+    git log "${DEFAULT_BRANCH}" --format='%H%x09%ce' | LC_ALL=C sort > ${DATADIR}/commits_with_author
+    echo "done."
+
+
+    #TODO: sampling on what we're pulling from github
+    #   for instance, we could grab the most recent K PRs (or limit to closed PRs)
+    echo "now we'll get some data from github. this might take a while."
+    echo "fetching pull requst and issue data..."
+    starttime=$(date +%s)
+    echo 'https://api.github.com/repos/'${REPO}'/pulls?state=all&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN MAX_PAGES=${MAX_ALL_PR_PAGES} ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/pulls.gz
+
+    EARLIEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .created_at' | sort -r | tail -n1)
+
+    echo 'https://api.github.com/repos/'${REPO}'/pulls/comments?since='${EARLIEST_PR}'&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/pull-comments.gz
+    echo 'https://api.github.com/repos/'${REPO}'/issues/comments?since='${EARLIEST_PR}'&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/issue-comments.gz
+    echo 'https://api.github.com/repos/'${REPO}'/issues?since='${EARLIEST_PR}'&state=all&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/issues.gz
+
+    #TODO: we don't use this data anywhere, maybe don't fetch it?
+    #echo 'https://api.github.com/repos/'${REPO}'/comments?per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/commit-comments.gz
+
+    echo "done fetching pull requst and issue data in $(( $(date +%s) - ${starttime}))s."
+    echo
+
+
+    if ! (cat ${DATADIR}/pulls.gz | zcat | head -n1 || true) | grep ',    "number": [0-9]*' > /dev/null; then
+        echo "there are no PRs in this repository"
+        echo
+
+        #just leave the sample files empty
+        touch ${DATADIR}/pr_sample
+        touch ${DATADIR}/pr_sample_pulls
+        touch ${DATADIR}/pr_sample_commits
+    else
+        #get a sample of pulls to prep some additional data
+        echo "preparing additional per-PR data for a ${PR_SAMPLESIZE} PR sample of PRs..."
+
+        starttime=$(date +%s)
+        echo "drawing the sample..."
+        pv ${DATADIR}/pulls.gz | zcat | grep -o ',    "number": [0-9]*' | sed -e 's/.* \([0-9]*\)$/\1/' | sort -R | tail -n${PR_SAMPLESIZE} | LC_ALL=C sort > ${DATADIR}/pr_sample
+
+        echo "fetching full pull objects for PR sample (this might take a while)..."
+        cat ${DATADIR}/pr_sample | gawk '{printf("https://api.github.com/repos/'${REPO}'/pulls/%d?per_page=100\n", $1)}' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" SILENT=true ${DIR}/fetch-comments.sh | pv -l -s$(cat ${DATADIR}/pr_sample | wc -l) > ${DATADIR}/pr_sample_pulls
+
+        echo "fetch commit list for PR sample (this might take a while)..."
+    cat ${DATADIR}/pr_sample | gawk '{printf("https://api.github.com/repos/'${REPO}'/pulls/%d/commits?per_page=100\n", $1)}' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" SILENT=true PREFIX_URL=true ${DIR}/fetch-comments.sh | pv -l -s$(cat ${DATADIR}/pr_sample | wc -l) > ${DATADIR}/pr_sample_commits
+
+        echo "done collecting sample PR data in $(( $(date +%s) - ${starttime}))s."
+        echo
+    fi
+
+elif [ -d "${DATADIR}" ]; then
+    echo "we'll process existing data  ${DATADIR}"
+    echo
+
+    #catch up on some state we might need
+    EARLIEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .created_at' | sort -r | tail -n1)
+else
+    echo "${DATADIR} doesn't exist, run without that param and we'll create a directory to hold data"
+    exit 1
+fi
+
+echo "computing stats..."
+starttime=$(date +%s)
+
+#gather PR status
+echo "prepping pr statuses..."
+pv ${DATADIR}/pulls.gz | zcat | jq -r '.[] | [.number, if .merged_at != null then "merged" else .state end, .created_at, .closed_at, .merge_commit_sha] | @tsv' | LC_ALL=C sort > ${DATADIR}/pr_status
+
+echo "prepping issue statuses..."
+pv ${DATADIR}/issues.gz | zcat | jq -r '.[] | [.number, .state] | @tsv' | LC_ALL=C sort | LC_ALL=C join -t$'\t' -v1 - ${DATADIR}/pr_status > ${DATADIR}/issue_status
+
+#truncate stats file
+> ${DATADIR}/stats.json
+
+#PR outcomes overall
+echo "PR outcome counts"
+cat ${DATADIR}/pr_status | gawk -F\\t 'BEGIN {OFS="\t"} {state[$2] +=1} END {for(x in state) { print x, state[x]}}' | jq -c --raw-input --slurp 'split("\n") | map(split("\t"))  | .[0:-1] | map({"state":.[0], "count":.[1]}) | {"stat":"pr_state", "data":.}' >> ${DATADIR}/stats.json
+
+#issue outcomes overall
+echo "issue outcome counts"
+cat ${DATADIR}/issue_status | gawk -F\\t 'BEGIN {OFS="\t"} {state[$2] +=1} END {for(x in state) { print x, state[x]}}' | jq -c --raw-input --slurp 'split("\n") | map(split("\t"))  | .[0:-1] | map({"state":.[0], "count":.[1]}) | {"stat":"issue_state", "data":.}' >> ${DATADIR}/stats.json
+
+#PRs over time by outcome
+echo "PR outcome over time"
+cat ${DATADIR}/pr_status | gawk -F\\t -i ${DIR}/date.awk 'BEGIN {OFS="\t"} {s[$2][int(parsedate($3)/(3600*24*30))*3600*24*30] += 1} END {for(x in s) { for(t in s[x]) { print x, t, s[x][t] } } }' | sort -k1,1 -k2n,2n |\
+    jq -c --slurp --raw-input --arg stat_name pr_over_time -f ${DIR}/groupscatter2json.jq\
+    >> ${DATADIR}/stats.json
+
+#PR lifetime distribution
+echo "PR lifetime distribution"
+cat ${DATADIR}/pr_status | gawk -F\\t -i ${DIR}/date.awk 'BEGIN {OFS="\t"} function bin(t) { if(t<0) { t=1} binned = int(1.3^(int(log(t)/log(1.3)))); if(t>3600*24*365) { binned = 3600*24*365 } return binned} $2=="open" {s[$2][bin(systime() - parsedate($3))]+=1} $2!="open" { s[$2][bin(parsedate($4) - parsedate($3))] += 1} END {for(x in s) { for(t in s[x]) { print x, t, s[x][t] } } }' | sort -k1,1 -k2n,2n |\
+    jq -c --slurp --raw-input --arg stat_name pr_lifetime -f ${DIR}/groupscatter2json.jq\
+    >> ${DATADIR}/stats.json
+
+#PR lifetime summary stats
+echo "PR lifetime summary"
+cat ${DATADIR}/pr_status | gawk -F\\t -i ${DIR}/date.awk 'BEGIN {OFS="\t"} $2=="open" {print $2, systime() - parsedate($3)} $2!="open" { print $2, parsedate($4) - parsedate($3)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name pr_lifetime_summary -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+#PR comments, only PRs with non-zero comments
+echo "preparing comment counts..."
+> ${DATADIR}/commentcounts.tmp
+#code comments
+zcat ${DATADIR}/pull-comments.gz |\
+    jq -r '.[] | .pull_request_url' | sed 's/.*\/\([0-9]*\)$/\1/' |\
+    LC_ALL=C sort | uniq -c |\
+    gawk 'BEGIN {OFS="\t"} {print $2, "codecomment", $1}'\
+    >> ${DATADIR}/commentcounts.tmp
+
+#toplevel comments
+zcat ${DATADIR}/issue-comments.gz |\
+    jq -r '.[] | .issue_url' | sed 's/.*\/\([0-9]*\)$/\1/' |\
+    LC_ALL=C sort | uniq -c |\
+    gawk 'BEGIN {OFS="\t"} {print $2, "toplevel", $1}'\
+    >> ${DATADIR}/commentcounts.tmp
+
+#all comments (no zeroes)
+cat\
+    <(zcat ${DATADIR}/issue-comments.gz |\
+        jq -r '.[] | .issue_url' | sed 's/.*\/\([0-9]*\)$/\1/')\
+    <(zcat ${DATADIR}/pull-comments.gz |\
+        jq -r '.[] | .pull_request_url' | sed 's/.*\/\([0-9]*\)$/\1/') |\
+     LC_ALL=C sort | uniq -c |\
+     gawk 'BEGIN {OFS="\t"} {print $2, "allcomments", $1}'\
+    >> ${DATADIR}/commentcounts.tmp
+
+#all comments (including zeros)
+cat\
+    <(zcat ${DATADIR}/issue-comments.gz |\
+        jq -r '.[] | .issue_url' | sed 's/.*\/\([0-9]*\)$/\1/')\
+    <(zcat ${DATADIR}/pull-comments.gz |\
+        jq -r '.[] | .pull_request_url' | sed 's/.*\/\([0-9]*\)$/\1/') |\
+     LC_ALL=C sort | uniq -c |\
+     gawk 'BEGIN {OFS="\t"} {print $2, "allcommentswzero", $1}' |\
+    LC_ALL=C join -t$'\t' -a1 <(cat ${DATADIR}/pr_status | cut -f1) - |\
+    gawk -F\\t 'BEGIN {OFS="\t"} $2=="" {print $1, "allcommentswzero", 0} $2!="" {print}'\
+    >> ${DATADIR}/commentcounts.tmp
+
+cat ${DATADIR}/commentcounts.tmp | LC_ALL=C sort > ${DATADIR}/commentcounts
+rm ${DATADIR}/commentcounts.tmp
+
+echo "PR comment count summary"
+cat ${DATADIR}/commentcounts | LC_ALL=C sort | join -t$'\t' ${DATADIR}/pr_status - | gawk -F\\t '{printf("%s-%s\t%d\n", $2, $6, $7)}' |\
+    gawk -F\\t -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name pr_comment_summary -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+#PR sizes (additions + deletions), a sample
+echo "PR size summary"
+cat ${DATADIR}/pr_sample_pulls | jq -r '[.number, .additions + .deletions] | @tsv' | join -t$'\t' ${DATADIR}/pr_status - | cut -f 2,6 |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name pr_size_summary -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+#PR sizes vs comments
+echo "PR size vs comments"
+cat ${DATADIR}/pr_sample_pulls | jq -r '[.number, .additions + .deletions] | @tsv' | LC_ALL=C join -t$'\t' ${DATADIR}/pr_status - | \
+    LC_ALL=C join -a1 -t$'\t' - ${DATADIR}/commentcounts \
+    | gawk -F\\t 'BEGIN {OFS="\t"} $7=="" { print $2, $6, 0} $6=="allcomments" {print $2, $6, $8}' | sort |\
+    jq -c --slurp --raw-input --arg stat_name pr_size_vs_comments -f ${DIR}/groupscatter2json.jq\
+    >> ${DATADIR}/stats.json
+
+#use of autolinks in several contexts
+echo "gathering use of autolinks in commits..."
+cat ${DATADIR}/commit_messages |\
+    gawk 'BEGIN {OFS="\t"} /^__commit__ [a-f0-9]{40}$/ {commit=$2} !/^__commit__ [a-f0-9]{40}$/ {print commit, $0}' |\
+    gawk -F\\t -v dsname=commit -f ${DIR}/extractautolinks.awk\
+    > ${DATADIR}/commit_autolinks
+
+#GitHub PR merge commits
+#TODO: break this into one set without filtering by PRs and one set that does
+echo "PR merge commits"
+printf "%d\t%d\t%d\t%d\n"\
+    $(cat ${DATADIR}/commit_messages | (grep -E '^__commit__ [a-f0-9]{40}$' || true) | wc -l)\
+    $(cat ${DATADIR}/commit_messages | (grep -E 'Merge pull request #[0-9]+ from' || true) | wc -l)\
+    $(cat ${DATADIR}/commit_messages | (grep -E -A1 '^__commit__ [a-f0-9]{40}$' || true) | (grep -E ' \(#[0-9]+\)$' || true) | wc -l)\
+    $(cat ${DATADIR}/commit_autolinks | grep 'closes' | cut -f 1 | LC_ALL=C sort -u  | wc -l) |\
+    jq -c --slurp --raw-input 'split("\t") | {"stat":"gh_merges", "data":{"commits":(.[0]|tonumber), "gh_merges":(.[1]|tonumber), "gh_likely_merge":(.[2]|tonumber), "likely_external_merge":(.[3]|tonumber)}}'\
+    >> ${DATADIR}/stats.json
+
+echo "PR merge commits during analysis period"
+printf "%d\t%d\t%d\t%d\n"\
+    $(cat ${DATADIR}/commit_messages | ag '__commit__ [a-f0-9]{40}' | gawk '{print $2}' | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/commitdates | gawk '$2 >= '$(date -d ${EARLIEST_PR} +%s) | wc -l)\
+    $(cat ${DATADIR}/commit_messages | (grep -E -o 'Merge pull request #[0-9]+ from' || true) | grep -o '[0-9]*' | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/pr_status | wc -l)\
+    $(cat ${DATADIR}/commit_messages | (grep -E -A1 '^__commit__ [a-f0-9]{40}$' || true) | (grep -E -o ' \(#[0-9]+\)$' || true) | grep -o '[0-9]*' | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/pr_status | wc -l)\
+    $(cat ${DATADIR}/commit_autolinks | grep 'closes' | cut -f 2 | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/pr_status | wc -l) |\
+    jq -c --slurp --raw-input 'split("\t") | {"stat":"gh_merges_during_prs", "data":{"commits":(.[0]|tonumber), "gh_merges":(.[1]|tonumber), "gh_likely_merge":(.[2]|tonumber), "likely_external_merge":(.[3]|tonumber)}}'\
+    >> ${DATADIR}/stats.json
+
+echo "use of autolinks in commits per commit"
+cat ${DATADIR}/commit_autolinks | gawk -F\\t '{print $4, $1}' | sort | uniq -c | gawk '{print $2, $1}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name autolink_commit_toany_per_commit -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "use of autolinks in commits to PR per commit"
+cat ${DATADIR}/commit_autolinks | gawk -F\\t 'BEGIN {OFS="\t"} {print $2, $1, $4}' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - ${DATADIR}/pr_status |\
+    gawk -F\\t '{print $3, $2}' | sort | uniq -c | gawk '{print $2, $1}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name autolink_commit_topr_per_commit -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "gathering use of autolinks in PRs..."
+> ${DATADIR}/pull_autolinks
+
+pv ${DATADIR}/pulls.gz | zcat | jq -r '.[] | [.number, .body] | @tsv' |\
+    gawk -F\\t -v dsname=pull -f ${DIR}/extractautolinks.awk\
+    >> ${DATADIR}/pull_autolinks
+
+pv ${DATADIR}/issue-comments.gz | zcat | jq -r '.[] | [.issue_url, .body] | @tsv' |\
+    sed -e 's/^https:\/\/[^\t]*\/\([0-9]*\)\t/\1\t/' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - ${DATADIR}/pr_status | cut -f 1,2 |\
+    gawk -F\\t -v dsname=pulltopcomment -f ${DIR}/extractautolinks.awk\
+    >> ${DATADIR}/pull_autolinks
+
+pv ${DATADIR}/pull-comments.gz | zcat | jq -r '.[] | [.pull_request_url, .body] | @tsv' |\
+    sed -e 's/^https:\/\/[^\t]*\/\([0-9]*\)\t/\1\t/' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - ${DATADIR}/pr_status | cut -f 1,2 |\
+    gawk -F\\t -v dsname=pullcodecomment -f ${DIR}/extractautolinks.awk\
+    >> ${DATADIR}/pull_autolinks
+
+echo "use of autolinks in prs per pr"
+cat ${DATADIR}/pull_autolinks | gawk '{printf("%s-%s\t%d\n", $3, $4, $1)}' | sort | uniq -c | gawk '{print $2, $1}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name autolink_pr_toany_per_pr -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "use of autolinks in prs to issues per pr"
+cat ${DATADIR}/pull_autolinks | gawk 'BEGIN {OFS="\t"} {print $2, $1, $3, $4}' |\
+    LC_ALL=C sort | LC_ALL=C join -v1 -t$'\t' - ${DATADIR}/pr_status |\
+    gawk '{printf("%s-%s\t%d\n", $3, $4, $2)}' | sort | uniq -c | gawk '{print $2, $1}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name autolink_pr_toissue_per_pr -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "gathering use of autolinks in issues..."
+> ${DATADIR}/issue_autolinks
+
+pv ${DATADIR}/issues.gz | zcat | jq -r '.[] | [.number, .body] | @tsv' |\
+    LC_ALL=C sort | LC_ALL=C join -v1 -t$'\t' - ${DATADIR}/pr_status | cut -f 1,2 |\
+    gawk -F\\t -v dsname=issue -f ${DIR}/extractautolinks.awk\
+    >> ${DATADIR}/issue_autolinks
+
+pv ${DATADIR}/issue-comments.gz | zcat | jq -r '.[] | [.issue_url, .body] | @tsv' |\
+    sed -e 's/^https:\/\/[^\t]*\/\([0-9]*\)\t/\1\t/' |\
+    LC_ALL=C sort | LC_ALL=C join -v1 -t$'\t' - ${DATADIR}/pr_status | cut -f 1,2 |\
+    gawk -F\\t -v dsname=issuecomment -f ${DIR}/extractautolinks.awk\
+    >> ${DATADIR}/issue_autolinks
+
+echo "use of autolinks in issues per issue"
+cat ${DATADIR}/issue_autolinks | gawk '{printf("%s-%s\t%d\n", $3, $4, $1)}' | sort | uniq -c | gawk '{print $2, $1}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name autolink_issue_toany_per_issue -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "use of autolinks in issues to pulls per issue"
+cat ${DATADIR}/issue_autolinks | gawk 'BEGIN {OFS="\t"} {print $2, $1, $3, $4}' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - ${DATADIR}/pr_status |\
+    gawk '{printf("%s-%s\t%d\n", $3, $4, $2)}' | sort | uniq -c | gawk '{print $2, $1}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name autolink_issue_topr_per_issue -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+#PR cycle stats
+echo "preparing PR comment data..."
+cat \
+    <(zcat ${DATADIR}/issue-comments.gz | jq -r '.[] | [.issue_url, .user.login, .created_at, "toplevel"] | @tsv') \
+    <(zcat ${DATADIR}/pull-comments.gz | jq -r '.[] | [.pull_request_url, .user.login, .created_at, "codecomment"] | @tsv') |\
+    sed -e 's/^[^\t]*\/\([0-9]*\)\t/\1\t/' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - ${DATADIR}/pr_status\
+    > ${DATADIR}/pr_comments_data
+
+echo "devs per PR"
+cat ${DATADIR}/pr_comments_data | cut -f 1,2,4 | sort -u |\
+    gawk -F\\t 'BEGIN {OFS="\t"} { print $0; print $1,$2,"any"}' |\
+    cut -f 1,3 | LC_ALL=C sort | uniq -c |\
+    gawk 'BEGIN {OFS="\t"} {print $2,$3,$1}' |\
+    LC_ALL=C join -t$'\t' - ${DATADIR}/pr_status | gawk -F\\t '{printf("%s-%s\t%d\n", $4,$2,$3)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name dev_per_pr -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "comments per dev-PR"
+cat ${DATADIR}/pr_comments_data | cut -f 1,2,4 |\
+    gawk 'BEGIN {OFS="\t"} { print $1,$2,$3; print $1,$2,"any"}' |\
+    cut -f 1,3 | LC_ALL=C sort | uniq -c |\
+    gawk 'BEGIN {OFS="\t"} {print $2,$3,$1}' |\
+    LC_ALL=C join -t$'\t' - ${DATADIR}/pr_status | gawk -F\\t '{printf("%s-%s\t%d\n", $4,$2,$3)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name comment_per_dev_pr -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "comments per dev"
+cat ${DATADIR}/pr_comments_data | cut -f 1,2,4 |\
+    gawk -F\\t 'BEGIN {OFS="\t"} { print $1,$2,$3; print $1,$2,"any"}' |\
+    LC_ALL=C join -t$'\t' - ${DATADIR}/pr_status |\
+    gawk -F\\t '$2!="" {printf("%s\t%s-%s\n", $2,$4,$3)}' | sort | uniq -c | gawk '{print $3,$1}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name comment_per_dev -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "PR cycle count per PR by outcome"
+cat ${DATADIR}/pr_comments_data | gawk -F\\t -i ${DIR}/date.awk -i ${DIR}/reduce.awk -f ${DIR}/extractplies.awk |\
+    cut -f 1,2,3,6 | uniq | cut -f1,4 | uniq -c | gawk '{print $3,$1}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name pr_plies_per_pr -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "computing avg comment time..."
+AVG_COMMENT_TIME=$(\
+    cat ${DATADIR}/pr_comments_data | gawk -F\\t -i ${DIR}/date.awk -i ${DIR}/reduce.awk -f ${DIR}/extractplies.awk |\
+    gawk -F\\t -i ${DIR}/reduce.awk 'BEGIN {OFS="\t";setkey("1\t2\t3");} function startrun(key) {state=$6;startts=$4;comments=0;sumtime=0;lastts=$4} function reduce(key) {if(comments>0) {print $4-lastts;} comments+=1; lastts=$4} function endrun(key) { }' |\
+    gawk '{s+=$1;n+=1} END {if(n>0) { print s/n } else { print 0} }')
+
+echo "PR cycle time per cycle by outcome"
+cat ${DATADIR}/pr_comments_data | gawk -F\\t -i ${DIR}/date.awk -i ${DIR}/reduce.awk -f ${DIR}/extractplies.awk |\
+    gawk -F\\t -i ${DIR}/reduce.awk -v avgctime=$AVG_COMMENT_TIME 'BEGIN {OFS="\t";setkey("1\t2\t3");} function startrun(key) {state=$6;startts=$4;comments=0;lastts=$4} function reduce(key) { comments+=1;lastts=$4} function endrun(key) { print key[1], key[2], key[3], comments, comments*avgctime, lastts-startts, state}' |\
+    gawk -F\\t '{printf("%s-estimate\t%f\n", $7, $5);if($4>0) {printf("%s-floor\t%f\n", $7, $6)}}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name pr_ply_time_per_ply -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "PR active review time by outcome"
+cat ${DATADIR}/pr_comments_data | gawk -F\\t -i ${DIR}/date.awk -i ${DIR}/reduce.awk -f ${DIR}/extractplies.awk |\
+    gawk -F\\t -i ${DIR}/reduce.awk -v avgctime=$AVG_COMMENT_TIME 'BEGIN {OFS="\t";setkey("1\t2\t3");} function startrun(key) {state=$6;startts=$4;comments=0;lastts=$4} function reduce(key) { comments+=1;lastts=$4} function endrun(key) { print key[1], key[2], key[3], comments, comments*avgctime, lastts-startts, state}' |\
+    gawk -F\\t -i ${DIR}/reduce.awk 'BEGIN {OFS="\t";setkey("1");} function startrun(key) {estimate=0;flr=0;state=$7} function reduce(key) {estimate+=$5;flr+=$6} function endrun(key) { printf("%s-estimate\t%f\n", state, estimate);printf("%s-floorwzero\t%f\n", state,
+flr);}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name pr_time_per_pr -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "PR active review time by outcome including zero engagement reviews"
+cat ${DATADIR}/pr_comments_data | gawk -F\\t -i ${DIR}/date.awk -i ${DIR}/reduce.awk -f ${DIR}/extractplies.awk |\
+    gawk -F\\t -i ${DIR}/reduce.awk -v avgctime=$AVG_COMMENT_TIME 'BEGIN {OFS="\t";setkey("1\t2\t3");} function startrun(key) {state=$6;startts=$4;comments=0;lastts=$4} function reduce(key) { comments+=1;lastts=$4} function endrun(key) { print key[1], key[2], key[3], comments, comments*avgctime, lastts-startts, state}' |\
+    LC_ALL=C join -t$'\t' -o 0,2.2,2.3,2.4,2.5,2.6,1.2 -a1 ${DATADIR}/pr_status - |\
+    gawk -F\\t -i ${DIR}/reduce.awk 'BEGIN {OFS="\t";setkey("1");} function startrun(key) {estimate=0;flr=0;state=$7} function reduce(key) {estimate+=$5;flr+=$6} function endrun(key) { printf("%s-estimate\t%f\n", state, estimate);printf("%s-floorwzero\t%f\n", state,
+flr);}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name pr_time_per_pr_wzero -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "PR active review time per reviewer by outcome"
+cat ${DATADIR}/pr_comments_data | gawk -F\\t -i ${DIR}/date.awk -i ${DIR}/reduce.awk -f ${DIR}/extractplies.awk |\
+    gawk -F\\t -i ${DIR}/reduce.awk -v avgctime=$AVG_COMMENT_TIME 'BEGIN {OFS="\t";setkey("1\t2\t3");} function startrun(key) {state=$6;startts=$4;comments=0;lastts=$4} function reduce(key) { comments+=1;lastts=$4} function endrun(key) { print key[1], key[2], key[3], comments, comments*avgctime, lastts-startts, state}' |\
+    gawk -F\\t -i ${DIR}/reduce.awk 'BEGIN {OFS="\t";setkey("1\t2");} function startrun(key) {estimate=0;flr=0;state=$7} function reduce(key) {estimate+=$5;flr+=$6} function endrun(key) { printf("%s-estimate\t%f\n", state, estimate);printf("%s-floorwzero\t%f\n", state, flr);}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name pr_time_per_dev_pr -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+#TODO: not clear this is a useful stat
+#echo "PR inter cycle time per inter cycle by outcome"
+#cat ${DATADIR}/pr_comments_data | gawk -F\\t -i ${DIR}/date.awk -i ${DIR}/reduce.awk -f ${DIR}/extractplies.awk |\
+#    gawk -F\\t -i reduce.awk 'BEGIN {OFS="\t";setkey("1\t2\t3");} function startrun(key) {state=$6;startts=$4;comments=0;lastts=$4;createts=$6;closets=$7} function reduce(key) { comments+=1;lastts=$4} function endrun(key) { print key[1], startts, lastts, state, createts, closets}' |\
+#    sort |\
+#    gawk -F\\t -i reduce.awk 'BEGIN {OFS="\t";setkey("1");} function startrun(key) {lastts=$3; state=$4; closets=$7; if($2-$6>2*3600) { print key[1], $2-$6, state;}} function reduce(key) {if(lastts<$2) { print key[1], $2-lastts, state} if(lastts<$3) {lastts=$3} } function endrun(key) { if(closets!="" && closets-lastts > 2*3600) { print key[1],closets-lastts,state; } }'
+
+#code lifetime stats
+echo "code birthdate summary"
+zcat ${DATADIR}/metadata.gz | cut -f 4,7 |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name code_birthdate_summary -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "code lifetime summary"
+zcat ${DATADIR}/metadata.gz | cut -f4,5 |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name code_lifetime_summary -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "dead code lifetime distribution"
+zcat ${DATADIR}/metadata.gz | ag 'died' | cut -f 5 | sort -n |\
+    gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
+    jq -c --slurp --raw-input --arg stat_name code_lifetime_died_cdf -f ${DIR}/cdf2json.jq\
+    >> ${DATADIR}/stats.json
+
+#TODO: code lifetime stats per file
+
+echo "code lifetime from merged PR summary"
+cat ${DATADIR}/pr_status | (grep 'merged' || true) |\
+    cut -f 5 | LC_ALL=C sort |\
+    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | gawk -F\\t 'BEGIN {OFS="\t"} {print $2, $4, $5}' | LC_ALL=C sort) |\
+    gawk -F\\t 'BEGIN {OFS="\t"} {printf("%s\t%s\n", $2, $3)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name code_lifetime_merged_pr_summary -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+#TODO: need to add in code that is merged but not reviewed (as zeros? as different case?)
+#TODO: need to sample these cases
+#code lifetime vs comments on PR
+#comments by pr from commentcounts
+#state and merge commit by pr from pr_status (just merges)
+#code lifetime by commit from metadata
+echo "code lifetime vs comments on PR"
+cat ${DATADIR}/pr_status | (grep 'merged' || true) | join -t$'\t' ${DATADIR}/commentcounts -|\
+    gawk -F\\t 'BEGIN {OFS="\t"} {print $7,$4,$2,$3}' | LC_ALL=C sort |\
+    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | gawk -F\\t 'BEGIN {OFS="\t"} {print $2, $4, $5}' | LC_ALL=C sort) |\
+    gawk -F\\t 'BEGIN {OFS="\t"} {printf("%s-%s-%s\t%d\t%d\n", $2, $5, $3, $4, $6)}' |\
+    jq -c --slurp --raw-input --arg stat_name code_lifetime_vs_comments -f ${DIR}/groupscatter2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "preparing a sample of reviewed and unreviewed commits..."
+
+> ${DATADIR}/reviewed_commits.tmp
+
+#commits with known GH templates
+cat ${DATADIR}/commit_messages |\
+    ag -A1 '^__commit__ [0-9a-f]{40}$' |\
+    gawk 'BEGIN {OFS="\t"} /^__commit__ [a-f0-9]{40}$/ {commit=$2} !/^__commit__ [a-f0-9]{40}$/ {print commit, $0}' |\
+    gawk -F\\t 'BEGIN {OFS="\t"} {if(match($2, /(Merge pull request #([0-9]+))|(\(#([0-9]+)\)$)/, m) > 0) { if(m[2] == "") { print m[4], $1} else { print m[2], $1}}}' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - ${DATADIR}/pr_status |\
+    gawk -F\\t 'BEGIN {OFS="\t"} {print $2, $1}' | LC_ALL=C sort -u\
+    >> ${DATADIR}/reviewed_commits.tmp
+
+#commits from external merge tools
+cat ${DATADIR}/commit_autolinks |\
+    (ag 'closes' || true) |\
+    gawk -F\\t 'BEGIN {OFS="\t"} {print $2,$1}' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - ${DATADIR}/pr_status |\
+    gawk -F\\t 'BEGIN {OFS="\t"} {print $2,$1}' | LC_ALL=C sort -u\
+    >> ${DATADIR}/reviewed_commits.tmp
+
+cat ${DATADIR}/reviewed_commits.tmp | LC_ALL=C sort -u\
+    > ${DATADIR}/reviewed_commits
+rm ${DATADIR}/reviewed_commits.tmp
+
+#the complement, but during the right period
+cat ${DATADIR}/commitdates |\
+    gawk -F\\t '$2 >='$(date -d ${EARLIEST_PR} +%s) | cut -f1 |
+    LC_ALL=C join -v1 - ${DATADIR}/reviewed_commits \
+    > ${DATADIR}/unreviewed_commits
+
+echo "dates for reviewed vs unreviewed commits"
+cat\
+    <(cat ${DATADIR}/reviewed_commits | cut -f 1 |\
+        LC_ALL=C join -t$'\t' - ${DATADIR}/commitdates |\
+        gawk -F\\t '{printf("reviewed\t%f\n", $2)}')\
+    <(cat ${DATADIR}/unreviewed_commits |\
+        LC_ALL=C join -t$'\t' - ${DATADIR}/commitdates |\
+        gawk -F\\t '{printf("unreviewed\t%f\n", $2)}') |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name commit_review_vs_date -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "overlap in files for reviewed vs unreviewed commits"
+cat\
+    <(cat ${DATADIR}/unreviewed_commits | gawk -v commits=$(cat ${DATADIR}/unreviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "unreviewed", 1.0/commits)}')\
+    <(cat ${DATADIR}/reviewed_commits | gawk -v commits=$(cat ${DATADIR}/reviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "reviewed", 1.0/commits)}') |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' -\
+        <(cat ${DATADIR}/filestatus | cut -f 1,4 | LC_ALL=C sort) |\
+    gawk 'BEGIN {OFS="\t"} {print $4,$2,$3}' |\
+    LC_ALL=C sort |\
+    gawk -F\\t -i ${DIR}/reduce.awk -f ${DIR}/jaccard.awk |\
+    jq -c --slurp --raw-input --arg stat_name commit_review_file_overlap -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "lifetime for code from reviewed vs unreviewed commits"
+cat\
+    <(cat ${DATADIR}/reviewed_commits | cut -f 1 |\
+        gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
+    <(cat ${DATADIR}/unreviewed_commits |\
+        gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
+    LC_ALL=C sort |\
+    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | ag 'died' | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "lines of code for reviewed vs unreviewed commits"
+cat\
+    <(cat ${DATADIR}/reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
+    <(cat ${DATADIR}/unreviewed_commits | cut -f1 | gawk '{printf("%s\tunreviewed\n", $1)}') |\
+    LC_ALL=C sort |\
+    LC_ALL=C join <(zcat ${DATADIR}/metadata.gz | cut -f 2 | LC_ALL=C sort) - |\
+    LC_ALL=C sort | uniq -c |\
+    gawk '{printf("%s\t%d\n",$3,$1)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name commit_review_size -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "lines of code for reviewed vs unreviewed commits by outcome"
+cat\
+    <(cat ${DATADIR}/reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
+    <(cat ${DATADIR}/unreviewed_commits | cut -f1 | gawk '{printf("%s\tunreviewed\n", $1)}') |\
+    LC_ALL=C sort |\
+    LC_ALL=C join <(zcat ${DATADIR}/metadata.gz | cut -f 2,4 | LC_ALL=C sort) - |\
+    LC_ALL=C sort | uniq -c |\
+    gawk '{printf("%s-%s\t%d\n",$4,$3,$1)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name commit_review_size_by_outcome -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+#TODO: commit structuredness within a PR stats
+#length of PR commit messages by outcome
+#size of PR commits by outcome
+#number of PR commits per pr by outcome
+#TBD: overlap in lines for commits in a pr
+
+#gather PR sample comment hashes
+echo "preparing comment commits..."
+pv ${DATADIR}/pull-comments.gz | zcat | jq -r '.[] | [.pull_request_url, .commit_id, .original_commit_id] | @tsv' | sed 's/^https[^\t]*\/\([0-9]*\)\t/\1\t/' | LC_ALL=C sort | LC_ALL=C join -t$'\t' <(LC_ALL=C join -t$'\t' ${DATADIR}/pr_sample ${DATADIR}/pr_status) - > ${DATADIR}/pr_sample_comment_commits
+
+#existence of PR comment commits in default branch
+echo "PR comment commit exists in default branch"
+cat ${DATADIR}/pr_sample_comment_commits |\
+    gawk -F\\t 'BEGIN {OFS="\t"} FNR==NR {refs[$1] = 1} FNR!=NR { all[$2] += 1; commit[$2] += refs[$5]; original[$2] += refs[$6] } END {for(x in all) { print x, all[x], commit[x], original[x] } }' ${DATADIR}/commits_with_author - |\
+    jq -c --slurp --raw-input 'split("\n") | map(split("\t")) | .[0:-1] | map({"state":.[0], "comments":.[1], "commit_exists":.[2], "original_exists":.[3]}) | {"stat":"pr_comment_commit_exists_default_branch", "data":.}'\
+    >> ${DATADIR}/stats.json
+
+#existence of PR comment commits in PR commit list
+cat ${DATADIR}/pr_sample_commits |\
+    jq --raw-input -r 'split("\t") | (.[0] | match(".*pulls/([0-9]+)/commits.*") | .captures[0].string | tonumber) as $pr_number | .[1] | fromjson | .[] | [$pr_number, .sha, .commit.committer.date] | @tsv' |\
+    gawk -i ${DIR}/date.awk -F\\t 'BEGIN {OFS="\t"} {print $1, $2, parsedate($3)}'\
+    > ${DATADIR}/pr_sample_commits_parsed
+
+echo "PR comment commit exists in PR list"
+cat ${DATADIR}/pr_sample_comment_commits |\
+    gawk -F\\t 'BEGIN {OFS="\t"} FNR==NR {refs[$1][$2] = 1} FNR!=NR { all[$2] += 1; commit[$2] += refs[$1][$5]; original[$2] += refs[$1][$6] } END {for(x in all) { print x, all[x], commit[x], original[x] } }' ${DATADIR}/pr_sample_commits_parsed - |\
+    jq -c --slurp --raw-input 'split("\n") | map(split("\t")) | .[0:-1] | map({"state":.[0], "comments":.[1], "commit_exists":.[2], "original_exists":.[3]}) | {"stat":"pr_comment_commit_exists_commitlist", "data":.}'\
+    >> ${DATADIR}/stats.json
+
+echo "PR commit exists in default branch"
+cat ${DATADIR}/pr_sample_commits_parsed |\
+    LC_ALL=C join -t$'\t' - ${DATADIR}/pr_status |\
+    cut -f 2,4 | LC_ALL=C sort |\
+    join -a1 -t$'\t' - ${DATADIR}/commits_with_author |\
+    gawk -F\\t '$3=="" { printf("%s\t0\n", $2)} $3!="" { printf("%s\t1\n", $2)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name pr_commit_exists_default_branch -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "PR commits per PR"
+cat ${DATADIR}/pr_sample_commits_parsed |\
+    LC_ALL=C join -t$'\t' - ${DATADIR}/pr_status |\
+    cut -f 1,4 | sort | uniq -c |\
+    gawk '{print $3,$1}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name commits_per_pr -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "PR commit relative date to PR"
+cat ${DATADIR}/pr_sample_commits_parsed |\
+    LC_ALL=C join -t$'\t' - ${DATADIR}/pr_status |\
+    gawk -i ${DIR}/date.awk -F\\t '{print $4, $3-parsedate($5)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name commit_relative_age -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "done computing stats in in $(( $(date +%s) - ${starttime}))s."
+echo
+
+echo "Thank You! Please email back the file ${DATADIR}/stats.json"
+
