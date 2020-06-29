@@ -8,6 +8,35 @@ lifecycle, including code churn and pull request cycle time.
 
 # How to Run
 
+## Running
+
+The tool runs inside the git repository you want to analyze. It needs the
+`GITHUB_TOKEN` environment variable set a GitHub token (see below). The tool
+will automatically detect the GitHub repository name from the git remote called
+"origin". See below under "Advanced Options" if your github repo is not in a
+remote called "origin". It would be helpful to have your git repo as up-to-date
+with the remote tracking your default branch as possible.
+
+All you have to do is run the script with that environment
+variable set, like so:
+
+```
+cd /path/to/my/repo/clone
+GITHUB_TOKEN="my_github_token_here" /path/to/statstool/statstool
+```
+
+It can take some time (15-30 minutes) to process all
+your commits and fetch all your data from GitHub. Once complete, the script
+will output something like:
+
+```
+Thank You! Please email back the file /tmp/autodevstats.repo_name.wknJM1DgVg/stats.json
+```
+
+That `stats.json` file contians the resulting stats about your dev process.
+Once you've returned that file back to AutoDev folks, it's safe to delete that
+folder.
+
 ## Dependencies
 
 The tool has a few dependencies:
@@ -36,8 +65,8 @@ export PATH="$(brew --prefix coreutils)/libexec/gnubin:$PATH"
 ```
 
 The tool will check for dependencies as the first thing it does. You should see
-output like below if everything is ok. If not, it'll exit at the first check that
-fails.
+output like below if everything is ok. If not, it'll exit at the first check
+that fails.
 
 ```
 checking for dependencies...
@@ -67,34 +96,6 @@ The token needs the top-level `repos` scope to fetch private repository data.
 This is what the tutorial in the documentation walks you through granting, so
 just follow that tutorial.
 
-## Running
-
-The tool runs inside the git repository you want to analyze. I needs the
-`GITHUB_TOKEN` environment variable set to the token created above. The tool
-will automatically detect the GitHub repository name from the git remote called
-"origin". See below under "Advanced Options" if your github repo is not in a
-remote called "origin". It would be helpful to have your git repo as up-to-date
-with the remote tracking your default branch as possible.
-
-All you have to do is run the script with that environment
-variable set, like so:
-
-```
-cd /path/to/my/repo/clone
-GITHUB_TOKEN="my_github_token_here" /path/to/statstool/statstool
-```
-
-It can take some time (15-30 minutes) to process all
-your commits and fetch all your data from GitHub. Once complete, the script will output something like:
-
-```
-Thank You! Please email back the file /tmp/autodevstats.repo_name.wknJM1DgVg/stats.json
-```
-
-That `stats.json` file contians the resulting stats about your dev process.
-Once you've returned that file back to AutoDev folks, it's safe to delete that
-folder.
-
 ## Advanced Options
 
 Other than setting `GITHUB_TOKEN`, as described above, as long as the tool runs
@@ -109,48 +110,18 @@ that the default branch is tracked by that remote. If this is not the case
 there are a couple of environment variables you can set to override this
 behavior.
 
+### URL of Origin
+
 `ORIGIN_URL` can be set to the clone url for whatever github repository hosts
 your main repository. You can grab this from github like so:
 
 ![how to find your origin url](finding_origin_url.png "finding origin url")
 
+### Default Branch
+
 `DEFAULT_BRANCH` the tool will try to get the default branch from your
 repository's GitHub settings. You can override this by setting this environment
 variable.
-
-# Stats
-
-The stats we pull should focus on things we can directly observe (vs modelling
-or lots of subtle inference).
-
-## Code Churn
-* code lifetime distribution: how long code survives from being introduced to death
-* code lifetime over expectation: compute average code lifetime by module, file, part of file so we can normalize the lifetime measurement for each line of code
-* TBD: some proxy for cause of code churn (bugfix vs feature enhancement)
-* distribution of code by developer (how many devs and how much code across them?)
-
-## Pull Requests
-* PR outcomes: distribution of open/merge/close
-* PR lifetime: how long pull requests are live before being merged/closed/open (and break these cases out)
-* PR comment counts: how many comments do PRs receive? (opn/closed/merged, with/out no-comment PRs)
-* PR autolink usage (description/top-level comment/code comment)
-* PR dev counts: how many devs are involved per PR?
-* PR cycles: how many review "plies" PRs get, how long do those plies take? how long between plies?
-* Reviewer engagement distribution: how many reviewers are there? how much review per dev?
-* Reviewer X coder: cross reviewer distribution with coder distribution, what's the relationship between review and coding?
-
-## PR Impact on Quality
-* TBD: compare code with/without review and lifetime/churn
-* TBD: compare code with/without review and amount of bug fixing
-
-# Design
-User gets a github token with appropriate access to private repos
-
-Runs in a local repo, giving access to git history. Analyze code churn and code
-identities for downstream analysis.
-
-From .git/config find the repo name at github. Pull down pull requests and PR
-comments. From these compute PR lifetime and cycle stats.
 
 # FAQ
 
@@ -170,7 +141,8 @@ looking at:
 * GitHub commit comments (`https://api.github.com/repos/:owner/:repo/comments`)
 
 Although the tool looks at all of this data, we're going to compute high-level
-summary stats that describe your dev process. The stats we ask for you to return to us doesn't include this raw data.
+summary stats that describe your dev process. The stats we ask for you to
+return to us doesn't include this raw data.
 
 **What stats are you computing?**
 
