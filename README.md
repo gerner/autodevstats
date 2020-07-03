@@ -139,6 +139,7 @@ looking at:
 * GitHub issues (`https://api.github.com/repos/:owner/:repo/issues`)
 * GitHub issue comments (`https://api.github.com/repos/:owner/:repo/issues/comments`)
 * GitHub commit comments (`https://api.github.com/repos/:owner/:repo/comments`)
+* GitHub commit pulls (`https://api.github.com/repos/:owner/:repo/commits/:sha/pulls`)
 
 Although the tool looks at all of this data, we're going to compute high-level
 summary stats that describe your dev process. The stats we ask for you to
@@ -166,6 +167,7 @@ that process. To do that we look at:
 * How long ago code was added to the repo
 * How long code lasts from addition to removal
 * How code lifetime varies with having a PR and with the number of PR comments
+* How often commit messages indicating reviewed code agrees with GitHub PR merges
 * How large un/reviewed commits are
 * How many lines from un/reviewed commits are live/dead
 * How old reviewed and unreviewed code is

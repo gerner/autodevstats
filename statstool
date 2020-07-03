@@ -16,6 +16,7 @@ fi
 set -eu -o pipefail
 
 PR_SAMPLESIZE=250
+COMMIT_PR_SAMPLESIZE=200
 MAX_ALL_PR_PAGES=20
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
@@ -164,9 +165,18 @@ if [ -z "${DATADIR}" ]; then
     #TODO: we don't use this data anywhere, maybe don't fetch it?
     #echo 'https://api.github.com/repos/'${REPO}'/comments?per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/commit-comments.gz
 
-    echo "done fetching pull requst and issue data in $(( $(date +%s) - ${starttime}))s."
+    echo "done fetching pull request and issue data in $(( $(date +%s) - ${starttime}))s."
     echo
 
+    echo "checking with GitHub how a sample of commits relate to pulls..."
+    starttime=$(date +%s)
+    cat ${DATADIR}/commitdates |\
+        gawk -vrepo=${REPO} -vearliest=$(date -d "${EARLIEST_PR}" +%s) -F\\t '$2>=earliest {printf("https://api.github.com/repos/%s/commits/%s/pulls\n", repo, $1)}' |\
+        sort -R | head -n${COMMIT_PR_SAMPLESIZE} |\
+        GITHUB_TOKEN=$GITHUB_TOKEN HEADER_ACCEPT="application/vnd.github.groot-preview+json" PREFIX_URL=true SILENT=true ~/src/autodevstats/fetch-comments.sh | pv -l -s200
+        > ${DATADIR}/commit_pulls
+    echo "done pulling commit pull request info in $(( $(date +%s) - ${starttime}))s."
+    echo
 
     if ! (cat ${DATADIR}/pulls.gz | zcat | head -n1 || true) | grep ',    "number": [0-9]*' > /dev/null; then
         echo "there are no PRs in this repository"
@@ -331,7 +341,7 @@ printf "%d\t%d\t%d\t%d\n"\
     $(cat ${DATADIR}/commit_messages | ag '__commit__ [a-f0-9]{40}' | gawk '{print $2}' | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/commitdates | gawk '$2 >= '$(date -d ${EARLIEST_PR} +%s) | wc -l)\
     $(cat ${DATADIR}/commit_messages | (grep -E -o 'Merge pull request #[0-9]+ from' || true) | grep -o '[0-9]*' | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/pr_status | wc -l)\
     $(cat ${DATADIR}/commit_messages | (grep -E -A1 '^__commit__ [a-f0-9]{40}$' || true) | (grep -E -o ' \(#[0-9]+\)$' || true) | grep -o '[0-9]*' | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/pr_status | wc -l)\
-    $(cat ${DATADIR}/commit_autolinks | grep 'closes' | cut -f 2 | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/pr_status | wc -l) |\
+    $(cat ${DATADIR}/commit_autolinks | grep 'close' | cut -f 2 | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/pr_status | wc -l) |\
     jq -c --slurp --raw-input 'split("\t") | {"stat":"gh_merges_during_prs", "data":{"commits":(.[0]|tonumber), "gh_merges":(.[1]|tonumber), "gh_likely_merge":(.[2]|tonumber), "likely_external_merge":(.[3]|tonumber)}}'\
     >> ${DATADIR}/stats.json
 
@@ -568,6 +578,14 @@ cat ${DATADIR}/commit_autolinks |\
     gawk -F\\t 'BEGIN {OFS="\t"} {print $2,$1}' | LC_ALL=C sort -u\
     >> ${DATADIR}/reviewed_commits.tmp
 
+#commits listed in merge_commit_sha for merged PRs
+cat ${DATADIR}/pr_status |\
+    (ag 'merged' || true) |\
+    gawk -F\\t 'BEGIN {OFS="\t"} {print $5,$1}' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - ${DATADIR}/commitdates |\
+    cut -f 1,2\
+    >> ${DATADIR}/reviewed_commits.tmp
+
 cat ${DATADIR}/reviewed_commits.tmp | LC_ALL=C sort -u\
     > ${DATADIR}/reviewed_commits
 rm ${DATADIR}/reviewed_commits.tmp
@@ -577,6 +595,25 @@ cat ${DATADIR}/commitdates |\
     gawk -F\\t '$2 >='$(date -d ${EARLIEST_PR} +%s) | cut -f1 |
     LC_ALL=C join -v1 - ${DATADIR}/reviewed_commits \
     > ${DATADIR}/unreviewed_commits
+
+echo "comparing GH commit pull association with commit message analysis"
+cat ${DATADIR}/commit_pulls |\
+    sed -E 's/^https:\/\/api.github.com\/repos\/[^\/]*\/[^\/]*\/commits\/([a-f0-9]{40})\/pulls/\1/' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - <(cat reviewed_commits unreviewed_commits | LC_ALL=C sort) |\
+    jq -r -R 'split("\t") | [.[0], (.[1] | fromjson | length), .[2]] | @tsv' |\
+    gawk -F\\t '$3=="" {printf("unreviewed\t%d\n",$2>0)} $3!="" {printf("reviewed\t%d\n",$2>0)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name gh_rev_vs_commit_rev -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+cat ${DATADIR}/commit_pulls |\
+    sed -E 's/^https:\/\/api.github.com\/repos\/[^\/]*\/[^\/]*\/commits\/([a-f0-9]{40})\/pulls/\1/' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - <(cat reviewed_commits unreviewed_commits | LC_ALL=C sort) |\
+    jq -r -R 'split("\t") | [.[0], (.[2] as $prnumber | .[1] | fromjson | map(.number) | select(($prnumber // "0" | tonumber))|length), .[2]] | @tsv' |\
+    gawk -F\\t '$3=="" {printf("unreviewed\t%d\n",$2>0)} $3!="" {printf("reviewed\t%d\n",$2>0)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name gh_rev_vs_commit_rev_strict -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
 
 echo "dates for reviewed vs unreviewed commits"
 cat\

@@ -13,6 +13,10 @@ if [ -z "${MAX_PAGES}" ]; then
     MAX_PAGES=""
 fi
 
+if [ -z "${HEADER_ACCEPT}" ]; then
+    HEADER_ACCEPT=""
+fi
+
 set -eu -o pipefail
 
 #make sure we can recover some info if we die in the middle of fetching data
@@ -64,7 +68,7 @@ while read NEXTURL; do
             fi
         fi
 
-        curl -f --retry 3 -L --compressed -s -D ${HEADERS} -H "Authorization: token ${GITHUB_TOKEN}" "${NEXTURL}" > ${COMMENTS}
+        curl -f --retry 3 -L --compressed -s -D ${HEADERS} -H "Authorization: token ${GITHUB_TOKEN}" -H "Accept: ${HEADER_ACCEPT}" "${NEXTURL}" > ${COMMENTS}
 
         #check if we're rate limited
         if grep --silent '403 Forbidden' ${HEADERS}; then
