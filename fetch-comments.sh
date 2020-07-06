@@ -20,7 +20,7 @@ fi
 set -eu -o pipefail
 
 #make sure we can recover some info if we die in the middle of fetching data
-trap 'echo "[ERROR] Error occurred at $BASH_SOURCE:$LINENO command: $BASH_COMMAND"' ERR
+trap 'echo "[ERROR] Error occurred at $BASH_SOURCE:$LINENO command: $BASH_COMMAND exit: $?" > /dev/stderr' ERR
 
 #assume env var "GITHUB_TOKEN" set
 
@@ -68,7 +68,7 @@ while read NEXTURL; do
             fi
         fi
 
-        curl -f --retry 3 -L --compressed -s -D ${HEADERS} -H "Authorization: token ${GITHUB_TOKEN}" -H "Accept: ${HEADER_ACCEPT}" "${NEXTURL}" > ${COMMENTS}
+        curl --retry 8 -L --compressed -s -D ${HEADERS} -H "Authorization: token ${GITHUB_TOKEN}" -H "Accept: ${HEADER_ACCEPT}" "${NEXTURL}" > ${COMMENTS}
 
         #check if we're rate limited
         if grep --silent '403 Forbidden' ${HEADERS}; then
@@ -79,6 +79,7 @@ while read NEXTURL; do
             grep 'X-RateLimit-' ${HEADERS} > /dev/stderr
 
             sleeptime=$(( ${reset_time} - $(date +%s) + 10 ))
+            echo "sleeping $sleeptime" > /dev/stderr
             sleep ${sleeptime}
         #TODO: I don't think we should support 404 at all. no results should just be an empty array, not a 404
         #check if there simply are no results
