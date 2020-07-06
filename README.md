@@ -133,6 +133,8 @@ looking at:
 
 * commit history on your default branch, especially merge commits (`git log; git show`)
 * commit messages and author (`git log`)
+* GitHub repository information (`https://api.github.com/repos/:owner/:repo`)
+* GitHub language information (`https://api.github.com/repos/:owner/:repo/languages`)
 * GitHub pull requests (`https://api.github.com/repos/:owner/:repo/pulls`)
 * GitHub PR comments (`https://api.github.com/repos/:owner/:repo/pulls/comments`)
 * GitHub PR commits (`https://api.github.com/repos/:owner/:repo/pulls/:pull_number/commits`)
@@ -151,6 +153,7 @@ We're only interested in high-level aggregate and descriptive statistics about
 your dev process and how developer engagement relates to different aspects of
 that process. To do that we look at:
 
+* The number of bytes of code in each langauges (as per GitHub languages API)
 * The number of open/closed issues
 * The number of open/closed/merged pull requests
 * How long pull requests last from open to close/merge

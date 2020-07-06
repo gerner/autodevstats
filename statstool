@@ -49,7 +49,7 @@ echo "all of this can take 15-30 minutes, so sit back and relax"
 echo
 
 #if we aren't just computing stats on a predfined datadir
-if [ -z "${DATADIR}" ]; then
+if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] ; then
     #get to toplevel of the repo which some steps below assume we are at
     cd $(git rev-parse --show-toplevel)
 
@@ -80,7 +80,7 @@ if [ -z "${DATADIR}" ]; then
 
     fi
 
-    REPO=$(echo "$ORIGIN_URL" | sed '/\.git$//' | sed -E '/^(git@|https:\/\/)github.com[:\/]/!{q1}; {s/.*github.com[:\/]([^\/]*\/[^\]*)$/\1/}')
+    REPO=$(echo "$ORIGIN_URL" | sed 's/\.git$//' | sed -E '/^(git@|https:\/\/)github.com[:\/]/!{q1}; {s/.*github.com[:\/]([^\/]*\/[^\]*)$/\1/}')
 
     echo "using remote url ${ORIGIN_URL}"
     echo "this corresponds to the github repository at https://github.com/${REPO}"
@@ -88,10 +88,16 @@ if [ -z "${DATADIR}" ]; then
     echo
 
     REPO_FNSAFE=$(echo "$REPO" | sed 's/\//_/')
-    DATADIR=$(mktemp --directory --tmpdir autodevstats.${REPO_FNSAFE}.XXXXXXXXXX)
-
+    if [ -z "${DATADIR}" ]; then
+        echo "choosing new directory to hold temp data"
+        DATADIR=$(mktemp --directory --tmpdir autodevstats.${REPO_FNSAFE}.XXXXXXXXXX)
+    else
+        echo "using given path to hold temp data"
+        mkdir "${DATADIR}"
+    fi
     echo "we'll write data to ${DATADIR}"
     echo
+
 
     echo "checking access to github for this repo..."
     REPO_URL="https://api.github.com/repos/${REPO}"
@@ -140,8 +146,10 @@ if [ -z "${DATADIR}" ]; then
     echo "preparing code history..."
     starttime=$(date +%s)
     DATADIR=${DATADIR} DEFAULT_BRANCH=${DEFAULT_BRANCH} FILE_EXCLUDE_PATHS=${DIR}/excludefiles.regex ${DIR}/build_features.sh
-    echo "done preparing code history in $(( $(date +%s) - ${starttime}))s."
+    code_history_time=$(( $(date +%s) - ${starttime}))
+    echo "done preparing code history in ${code_history_time}s."
     echo
+    printf "code_history_time\t%f\n" ${code_history_time} >> ${DATADIR}/times.tsv
 
     echo "preparing commit messages..."
     git log "${DEFAULT_BRANCH}" --first-parent --format='__commit__ %H%x0A%B' > ${DATADIR}/commit_messages
@@ -154,6 +162,7 @@ if [ -z "${DATADIR}" ]; then
     echo "now we'll get some data from github. this might take a while."
     echo "fetching pull requst and issue data..."
     starttime=$(date +%s)
+    echo 'https://api.github.com/repos/'${REPO}'/languages' | GITHUB_TOKEN=$GITHUB_TOKEN ${DIR}/fetch-comments.sh > ${DATADIR}/languages.json
     echo 'https://api.github.com/repos/'${REPO}'/pulls?state=all&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN MAX_PAGES=${MAX_ALL_PR_PAGES} ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/pulls.gz
 
     EARLIEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .created_at' | sort -r | tail -n1)
@@ -165,18 +174,22 @@ if [ -z "${DATADIR}" ]; then
     #TODO: we don't use this data anywhere, maybe don't fetch it?
     #echo 'https://api.github.com/repos/'${REPO}'/comments?per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/commit-comments.gz
 
-    echo "done fetching pull request and issue data in $(( $(date +%s) - ${starttime}))s."
+    github_fetch_time=$(( $(date +%s) - ${starttime}))
+    echo "done fetching pull request and issue data in ${github_fetch_time}s."
     echo
+    printf "github_fetch_time\t%f\n" ${github_fetch_time} >> ${DATADIR}/times.tsv
 
     echo "checking with GitHub how a sample of commits relate to pulls..."
     starttime=$(date +%s)
     cat ${DATADIR}/commitdates |\
         gawk -vrepo=${REPO} -vearliest=$(date -d "${EARLIEST_PR}" +%s) -F\\t '$2>=earliest {printf("https://api.github.com/repos/%s/commits/%s/pulls\n", repo, $1)}' |\
-        sort -R | head -n${COMMIT_PR_SAMPLESIZE} |\
-        GITHUB_TOKEN=$GITHUB_TOKEN HEADER_ACCEPT="application/vnd.github.groot-preview+json" PREFIX_URL=true SILENT=true ~/src/autodevstats/fetch-comments.sh | pv -l -s200
+        sort -R | tail -n${COMMIT_PR_SAMPLESIZE} |\
+        GITHUB_TOKEN=$GITHUB_TOKEN HEADER_ACCEPT="application/vnd.github.groot-preview+json" PREFIX_URL=true SILENT=true ${DIR}/fetch-comments.sh | pv -l -s200 \
         > ${DATADIR}/commit_pulls
-    echo "done pulling commit pull request info in $(( $(date +%s) - ${starttime}))s."
+    github_commit_pull_time=$(( $(date +%s) - ${starttime}))
+    echo "done pulling commit pull request info in ${github_commit_pull_time}s."
     echo
+    printf "github_commit_pull_time\t%f\n" ${github_commit_pull_time} >> ${DATADIR}/times.tsv
 
     if ! (cat ${DATADIR}/pulls.gz | zcat | head -n1 || true) | grep ',    "number": [0-9]*' > /dev/null; then
         echo "there are no PRs in this repository"
@@ -200,8 +213,10 @@ if [ -z "${DATADIR}" ]; then
         echo "fetch commit list for PR sample (this might take a while)..."
     cat ${DATADIR}/pr_sample | gawk '{printf("https://api.github.com/repos/'${REPO}'/pulls/%d/commits?per_page=100\n", $1)}' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" SILENT=true PREFIX_URL=true ${DIR}/fetch-comments.sh | pv -l -s$(cat ${DATADIR}/pr_sample | wc -l) > ${DATADIR}/pr_sample_commits
 
-        echo "done collecting sample PR data in $(( $(date +%s) - ${starttime}))s."
+        github_pull_sample_time=$(( $(date +%s) - ${starttime}))
+        echo "done collecting sample PR data in ${github_pull_sample_time}s."
         echo
+        printf "github_pull_sample_time\t%f\n" ${github_pull_sample_time} >> ${DATADIR}/times.tsv
     fi
 
 elif [ -d "${DATADIR}" ]; then
@@ -211,12 +226,22 @@ elif [ -d "${DATADIR}" ]; then
     #catch up on some state we might need
     EARLIEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .created_at' | sort -r | tail -n1)
 else
-    echo "${DATADIR} doesn't exist, run without that param and we'll create a directory to hold data"
+    echo "${DATADIR} exists but isn't a directory, run without that param and we'll create a directory to hold data"
     exit 1
 fi
 
 echo "computing stats..."
 starttime=$(date +%s)
+
+#truncate stats file
+> ${DATADIR}/stats.json
+
+cat ${DATADIR}/times.tsv |\
+    jq -c -R --slurp 'split("\n")[0:-1] | map(split("\t") | {(.[0]): (.[1] | tonumber)}) | add | {"stat": "data_times", "data": . }' \
+    >> ${DATADIR}/stats.json
+
+echo "bytes of code per language"
+cat ${DATADIR}/languages.json | jq -c '{"stat":"languages", data: .}' >> ${DATADIR}/stats.json
 
 #gather PR status
 echo "prepping pr statuses..."
@@ -224,9 +249,6 @@ pv ${DATADIR}/pulls.gz | zcat | jq -r '.[] | [.number, if .merged_at != null the
 
 echo "prepping issue statuses..."
 pv ${DATADIR}/issues.gz | zcat | jq -r '.[] | [.number, .state] | @tsv' | LC_ALL=C sort | LC_ALL=C join -t$'\t' -v1 - ${DATADIR}/pr_status > ${DATADIR}/issue_status
-
-#truncate stats file
-> ${DATADIR}/stats.json
 
 #PR outcomes overall
 echo "PR outcome counts"
@@ -515,19 +537,19 @@ cat ${DATADIR}/pr_comments_data | gawk -F\\t -i ${DIR}/date.awk -i ${DIR}/reduce
 
 #code lifetime stats
 echo "code birthdate summary"
-zcat ${DATADIR}/metadata.gz | cut -f 4,7 |\
+pv ${DATADIR}/metadata.gz | zcat | cut -f 4,7 |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name code_birthdate_summary -f ${DIR}/gs2json.jq\
     >> ${DATADIR}/stats.json
 
 echo "code lifetime summary"
-zcat ${DATADIR}/metadata.gz | cut -f4,5 |\
+pv ${DATADIR}/metadata.gz | zcat | cut -f4,5 |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name code_lifetime_summary -f ${DIR}/gs2json.jq\
     >> ${DATADIR}/stats.json
 
 echo "dead code lifetime distribution"
-zcat ${DATADIR}/metadata.gz | ag 'died' | cut -f 5 | sort -n |\
+pv ${DATADIR}/metadata.gz | zcat | ag 'died' | cut -f 5 | sort -n |\
     gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
     jq -c --slurp --raw-input --arg stat_name code_lifetime_died_cdf -f ${DIR}/cdf2json.jq\
     >> ${DATADIR}/stats.json
@@ -549,13 +571,13 @@ cat ${DATADIR}/pr_status | (grep 'merged' || true) |\
 #comments by pr from commentcounts
 #state and merge commit by pr from pr_status (just merges)
 #code lifetime by commit from metadata
-echo "code lifetime vs comments on PR"
-cat ${DATADIR}/pr_status | (grep 'merged' || true) | join -t$'\t' ${DATADIR}/commentcounts -|\
-    gawk -F\\t 'BEGIN {OFS="\t"} {print $7,$4,$2,$3}' | LC_ALL=C sort |\
-    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | gawk -F\\t 'BEGIN {OFS="\t"} {print $2, $4, $5}' | LC_ALL=C sort) |\
-    gawk -F\\t 'BEGIN {OFS="\t"} {printf("%s-%s-%s\t%d\t%d\n", $2, $5, $3, $4, $6)}' |\
-    jq -c --slurp --raw-input --arg stat_name code_lifetime_vs_comments -f ${DIR}/groupscatter2json.jq\
-    >> ${DATADIR}/stats.json
+#echo "code lifetime vs comments on PR"
+#cat ${DATADIR}/pr_status | (grep 'merged' || true) | join -t$'\t' ${DATADIR}/commentcounts -|\
+#    gawk -F\\t 'BEGIN {OFS="\t"} {print $7,$4,$2,$3}' | LC_ALL=C sort |\
+#    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | gawk -F\\t 'BEGIN {OFS="\t"} {print $2, $4, $5}' | LC_ALL=C sort) |\
+#    gawk -F\\t 'BEGIN {OFS="\t"} {printf("%s-%s-%s\t%d\t%d\n", $2, $5, $3, $4, $6)}' |\
+#    jq -c --slurp --raw-input --arg stat_name code_lifetime_vs_comments -f ${DIR}/groupscatter2json.jq\
+#    >> ${DATADIR}/stats.json
 
 echo "preparing a sample of reviewed and unreviewed commits..."
 
