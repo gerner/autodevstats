@@ -41,7 +41,7 @@ FILE_METADATA=${DATADIR}/metadata.gz
 # choose the commits you're going to look at (git log)
 # get all the filestatuses for relevant changes
 echo "listing commits on $DEFAULT_BRANCH to ${FILE_FILESTATUS}"
-git log -m --first-parent --name-status --topo-order --format='%H%x09%ct%x09%P' $DEFAULT_BRANCH | gawk 'BEGIN {OFS="\t"} NR == 1 {next_master=$1;last_master=$1} next_master != "" && $1 == next_master { next_master = $3; last_master=$1} $1 ~ /^[a-f0-9]{40}$/ {last_commit = $1} NF > 0 && $1 !~ /^[a-f0-9]{40}$/ { print last_master, last_commit, $0}' | pv > ${FILE_FILESTATUS}
+git log --no-renames -m --first-parent --name-status --topo-order --format='%H%x09%ct%x09%P' $DEFAULT_BRANCH | gawk 'BEGIN {OFS="\t"} NR == 1 {next_master=$1;last_master=$1} next_master != "" && $1 == next_master { next_master = $3; last_master=$1} $1 ~ /^[a-f0-9]{40}$/ {last_commit = $1} NF > 0 && $1 !~ /^[a-f0-9]{40}$/ { print last_master, last_commit, $0}' | pv > ${FILE_FILESTATUS}
 
 #exclude external files and documentation
 if [ -z "$FILE_EXCLUDE_PATHS" ]; then
@@ -54,7 +54,7 @@ fi
 
 
 #get some metadata
-git log --first-parent --topo-order --format='%H%x09%ct%x09%P%x09%t%x09%s' $DEFAULT_BRANCH | cut -f 1,2 | LC_ALL=C sort -u > ${FILE_COMMIT_DATES}
+git log --no-renames --first-parent --topo-order --format='%H%x09%ct%x09%P%x09%t%x09%s' $DEFAULT_BRANCH | cut -f 1,2 | LC_ALL=C sort -u > ${FILE_COMMIT_DATES}
 
 # create the list of commits
 #I'm explicitly filtering out some files that have irritating characters
@@ -73,7 +73,7 @@ pv ${FILE_FILESTATUS} | ag -v 'actionpack/test/fixtures/public/foo' |\
 #gawk -F\\t '{printf("echo \"merging %s %s %s\"\n", $1, $2, $4);printf("git show -m --first-parent -U0 --oneline %s -- '"'"'%s'"'"'\n", $2, $4)}' |\
 echo "get diffs from those commits (this might take a while) to ${FILE_LINES}"
 cat ${FILE_COMMITS} |\
-    gawk -F\\t 'function printgitshow(ncommits, commits, filename) {if(ncommits <= 0) { return; } printf("git show -m --first-parent -U0 --format=\"merging %%H %%H %s%%x0A%%h %%s\" %s -- %s\n", filename, commits, filename);} BEGIN {commits="";ncommits=0} ncommits>=100 || $4 != lastf {printgitshow(ncommits, commits, lastf);ncommits=0; commits=""} {ncommits+=1; commits = commits " " $2; lastf=$4} END {printgitshow(ncommits, commits, lastf) }' |\
+    gawk -F\\t 'function printgitshow(ncommits, commits, filename) {if(ncommits <= 0) { return; } printf("git show --no-renames -m --first-parent -U0 --format=\"merging %%H %%H %s%%x0A%%h %%s\" %s -- \"%s\"\n", filename, commits, filename);} BEGIN {commits="";ncommits=0} ncommits>=100 || $4 != lastf {printgitshow(ncommits, commits, lastf);ncommits=0; commits=""} {ncommits+=1; commits = commits " " $2; lastf=$4} END {printgitshow(ncommits, commits, lastf) }' |\
     bash | pv -Nbytes -c | tee >(gzip -c > ${FILE_LINES}) |\
     ag '^merging [a-f0-9]{40}' | pv -c -Ncommits -l -s$(cat ${FILE_COMMITS} | wc -l) > /dev/null
 

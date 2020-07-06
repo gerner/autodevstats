@@ -162,7 +162,7 @@ NR > 1 && /^merging / && $4 != lastfile {
     #diff --git a/PATH_GOES_HERE b/PATH_GOES_HERE
     #note, PATH_GOES_HERE is always the same on left and right
 
-    n = match($0, /diff --git a\/(.*) b\/(.*)/, matcharr);
+    n = match($0, /diff --git "?a\/(.*)"? "?b\/(.*)"?/, matcharr);
 
     if(n <= 0) {
         print "got malformed diff line on ", NR > "/dev/stderr";
@@ -171,7 +171,7 @@ NR > 1 && /^merging / && $4 != lastfile {
     }
 
     if(matcharr[1] != matcharr[2]) {
-        print "got malformed diff line on ", NR > "/dev/stderr";
+        print "got diff with mismatched files line on ", NR > "/dev/stderr";
         error = 1;
         exit 1;
     }
