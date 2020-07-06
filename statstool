@@ -621,7 +621,7 @@ cat ${DATADIR}/commitdates |\
 echo "comparing GH commit pull association with commit message analysis"
 cat ${DATADIR}/commit_pulls |\
     sed -E 's/^https:\/\/api.github.com\/repos\/[^\/]*\/[^\/]*\/commits\/([a-f0-9]{40})\/pulls/\1/' |\
-    LC_ALL=C sort | LC_ALL=C join -t$'\t' - <(cat reviewed_commits unreviewed_commits | LC_ALL=C sort) |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - <(cat ${DATADIR}/reviewed_commits ${DATADIR}/unreviewed_commits | LC_ALL=C sort) |\
     jq -r -R 'split("\t") | [.[0], (.[1] | fromjson | length), .[2]] | @tsv' |\
     gawk -F\\t '$3=="" {printf("unreviewed\t%d\n",$2>0)} $3!="" {printf("reviewed\t%d\n",$2>0)}' |\
     gawk -M -f ${DIR}/groupstats.awk |\
@@ -630,7 +630,7 @@ cat ${DATADIR}/commit_pulls |\
 
 cat ${DATADIR}/commit_pulls |\
     sed -E 's/^https:\/\/api.github.com\/repos\/[^\/]*\/[^\/]*\/commits\/([a-f0-9]{40})\/pulls/\1/' |\
-    LC_ALL=C sort | LC_ALL=C join -t$'\t' - <(cat reviewed_commits unreviewed_commits | LC_ALL=C sort) |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - <(cat ${DATADIR}/reviewed_commits ${DATADIR}/unreviewed_commits | LC_ALL=C sort) |\
     jq -r -R 'split("\t") | [.[0], (.[2] as $prnumber | .[1] | fromjson | map(.number) | select(($prnumber // "0" | tonumber))|length), .[2]] | @tsv' |\
     gawk -F\\t '$3=="" {printf("unreviewed\t%d\n",$2>0)} $3!="" {printf("reviewed\t%d\n",$2>0)}' |\
     gawk -M -f ${DIR}/groupstats.awk |\
