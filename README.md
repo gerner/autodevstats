@@ -154,6 +154,7 @@ your dev process and how developer engagement relates to different aspects of
 that process. To do that we look at:
 
 * The number of bytes of code in each langauges (as per GitHub languages API)
+* Primary language used in the repository
 * The number of open/closed issues
 * The number of open/closed/merged pull requests
 * How long pull requests last from open to close/merge
@@ -170,6 +171,7 @@ that process. To do that we look at:
 * How long ago code was added to the repo
 * How long code lasts from addition to removal
 * How code lifetime varies with having a PR and with the number of PR comments
+* How commits are distributed across developers
 * How often commit messages indicating reviewed code agrees with GitHub PR merges
 * How large un/reviewed commits are
 * How many lines from un/reviewed commits are live/dead
@@ -180,8 +182,17 @@ that process. To do that we look at:
 * How often commits in a PR are in the default branch
 * The number of commits per PR
 * The age of commits relative to PR creation
+* Is the repository private?
+* Is the repository a fork?
+* The number of forks of the repository
+* The number of stargazers
+* the number of watchers
 
-None of these include specifically identifiable information (like repo name,
-file name, folder name, developer name, commit id, individual lines of code,
-etc.)
+We do collect a few pieces of identifying information:
+* repository name
+* name of the default branch
+* when the repository was created, updated and last pushed to
+
+We don't collect any other identifiable information (like file names, folder
+names, developer names, commit id, individual lines of code, etc.)
 
