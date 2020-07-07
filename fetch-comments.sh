@@ -40,6 +40,9 @@ trap 'echo "[ERROR] Error occurred at $BASH_SOURCE:$LINENO command: $BASH_COMMAN
 #    NEXTURL="$1"
 #fi
 
+RETRY_TIME=1
+RETRY_MAX_COUNT=8
+
 #a fifo for tracking progress for each input url
 PV_PIDFILE=$(mktemp -u --tmpdir autodev_fetch_pvpid.XXXXXXXXXX)
 FETCH_FIFO=$(mktemp -u --tmpdir autodev_fetch_fifo.XXXXXXXXXX)
@@ -61,6 +64,8 @@ while read NEXTURL; do
     $SILENT || exec 3>$FETCH_FIFO
 
     pages=0
+    retry_count=0
+    retry_sleep=$RETRY_TIME
     while [ ! -z "${NEXTURL}" ]; do
         if [ ! -z "${MAX_PAGES}" ]; then
             if [[ "${pages}" -ge "${MAX_PAGES}" ]]; then
@@ -68,10 +73,23 @@ while read NEXTURL; do
             fi
         fi
 
-        curl --retry 8 -L --compressed -s -D ${HEADERS} -H "Authorization: token ${GITHUB_TOKEN}" -H "Accept: ${HEADER_ACCEPT}" "${NEXTURL}" > ${COMMENTS}
+        curl -L --compressed -s -D ${HEADERS} -H "Authorization: token ${GITHUB_TOKEN}" -H "Accept: ${HEADER_ACCEPT}" "${NEXTURL}" > ${COMMENTS}
 
-        #check if we're rate limited
-        if grep --silent '403 Forbidden' ${HEADERS}; then
+        if grep -E --silent '^HTTP/[^ ]+ +5[0-9][0-9]' ${HEADERS}; then
+            #handle server errors with retry
+            #we do this manually to avoid polluting the output with server
+            #error output
+            if [ "$retry_count" -ge "$RETRY_MAX_COUNT" ]; then
+                echo "exceeded max retry count ${retry_count} on ${NEXT_URL}" > /dev/stderr
+                exit 1;
+            fi
+            retry_count=$(( $retry_count + 1 ))
+            retry_sleep=$(( $retry_sleep * 2 ))
+            sleep ${retry_sleep}
+        elif grep --silent '403 Forbidden' ${HEADERS}; then
+            retry_count=0
+            retry_sleep=$RETRY_TIME
+            #handle rate limiting
             echo "rate limit" > /dev/stderr
 
             reset_time=$(grep '^X-RateLimit-Reset: [0-9]*' ${HEADERS} | sed 's/^X-RateLimit-Reset: \([0-9]*\).*/\1/')
@@ -92,6 +110,8 @@ while read NEXTURL; do
         #        exit 1
         #    fi
         else
+            retry_count=0
+            retry_sleep=$RETRY_TIME
             #check if there was some other error
             if ! grep --silent '200 OK' ${HEADERS}; then
                 echo "got bad exit code, see ${HEADERS} for details" > /dev/stderr
