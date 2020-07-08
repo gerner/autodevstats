@@ -73,9 +73,8 @@ while read NEXTURL; do
             fi
         fi
 
-        curl -L --compressed -s -D ${HEADERS} -H "Authorization: token ${GITHUB_TOKEN}" -H "Accept: ${HEADER_ACCEPT}" "${NEXTURL}" > ${COMMENTS}
 
-        if grep -E --silent '^HTTP/[^ ]+ +5[0-9][0-9]' ${HEADERS}; then
+        if (! curl -L --compressed -s -D ${HEADERS} -H "Authorization: token ${GITHUB_TOKEN}" -H "Accept: ${HEADER_ACCEPT}" "${NEXTURL}" > ${COMMENTS} ) || grep -E --silent '^HTTP/[^ ]+ +5[0-9][0-9]' ${HEADERS}; then
             #handle server errors with retry
             #we do this manually to avoid polluting the output with server
             #error output
