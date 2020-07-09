@@ -22,7 +22,7 @@ variable set, like so:
 
 ```
 cd /path/to/my/repo/clone
-GITHUB_TOKEN="my_github_token_here" /path/to/statstool/statstool
+GITHUB_TOKEN="my_github_token_here" /path/to/autodevstats/statstool
 ```
 
 It can take some time (15-30 minutes) to process all
@@ -47,11 +47,12 @@ The tool has a few dependencies:
 * gnu coreutils
 * pv
 * ag
+* jq
 
 on a debian based linux distro, you can install these with:
 
 ```
-sudo apt-get install curl git gawk coreutils pv silversearcher-ag
+sudo apt-get install curl git gawk coreutils pv silversearcher-ag jq
 ```
 
 on mac os:
