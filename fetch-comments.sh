@@ -134,7 +134,9 @@ while read NEXTURL; do
                 fi
 
                 $SILENT || echo "${TOTALPAGES} pages" > /dev/stderr
-                $SILENT || pv -R $(cat $PV_PIDFILE) -s ${EXPECTED_PAGES}
+                #allow this pv to fail without killing the script
+                #this might happen on Cygwin or WSL
+                $SILENT || pv -R $(cat $PV_PIDFILE) -s ${EXPECTED_PAGES} || true
             fi
 
             $SILENT || echo '.' > ${FETCH_FIFO}
