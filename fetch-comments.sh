@@ -41,7 +41,7 @@ trap 'echo "[ERROR] Error occurred at $BASH_SOURCE:$LINENO command: $BASH_COMMAN
 #fi
 
 RETRY_TIME=1
-RETRY_MAX_COUNT=8
+RETRY_MAX_COUNT=10
 
 #a fifo for tracking progress for each input url
 PV_PIDFILE=$(mktemp -u --tmpdir autodev_fetch_pvpid.XXXXXXXXXX)
@@ -79,7 +79,7 @@ while read NEXTURL; do
             #we do this manually to avoid polluting the output with server
             #error output
             if [ "$retry_count" -ge "$RETRY_MAX_COUNT" ]; then
-                echo "exceeded max retry count ${retry_count} on ${NEXT_URL}" > /dev/stderr
+                echo "exceeded max retry count ${retry_count} on ${NEXTURL}" > /dev/stderr
                 exit 1;
             fi
             retry_count=$(( $retry_count + 1 ))
@@ -95,7 +95,7 @@ while read NEXTURL; do
 
             grep 'X-RateLimit-' ${HEADERS} > /dev/stderr
 
-            sleeptime=$(( ${reset_time} - $(date +%s) + 10 ))
+            sleeptime=$(( $(( ${reset_time} - $(date +%s) )) + 10 ))
             echo "sleeping $sleeptime" > /dev/stderr
             sleep ${sleeptime}
         #TODO: I don't think we should support 404 at all. no results should just be an empty array, not a 404
