@@ -61,7 +61,7 @@ Install the dependencies and then update your path to put the standard gnu
 coreutils tools on your path.
 
 ```
-brew install the_silver_searcher coreutils curl git pv gawk
+brew install the_silver_searcher coreutils curl git pv gawk jq
 export PATH="$(brew --prefix coreutils)/libexec/gnubin:$PATH"
 ```
 
@@ -104,14 +104,14 @@ somewhere inside a clone of the repo you want to analyze, you don't need to
 provide anything else. But there are other options you can specify to override
 default, automated behavior.
 
+### URL of Origin
+
 The tool assumes your main github repo, the one you collaborate on with others,
 that hosts your code reviews, is a git remote called "origin". From there, the
 tool will automatically detect your default branch. And the tool will assume
 that the default branch is tracked by that remote. If this is not the case
 there are a couple of environment variables you can set to override this
 behavior.
-
-### URL of Origin
 
 `ORIGIN_URL` can be set to the clone url for whatever github repository hosts
 your main repository. You can grab this from github like so:
