@@ -44,14 +44,16 @@ echo "listing commits on $DEFAULT_BRANCH to ${FILE_FILESTATUS}"
 git log --no-renames -m --first-parent --name-status --topo-order --format='%H%x09%ct%x09%P' $DEFAULT_BRANCH | gawk 'BEGIN {OFS="\t"} NR == 1 {next_master=$1;last_master=$1} next_master != "" && $1 == next_master { next_master = $3; last_master=$1} $1 ~ /^[a-f0-9]{40}$/ {last_commit = $1} NF > 0 && $1 !~ /^[a-f0-9]{40}$/ { print last_master, last_commit, $0}' | pv > ${FILE_FILESTATUS}
 
 #exclude external files and documentation
+echo "filtering external/3rd party files and documentation..."
 if [ -z "$FILE_EXCLUDE_PATHS" ]; then
     cat ${FILE_FILESTATUS} | cut -f 4 | LC_ALL=C sort -u > ${FILE_FILELIST}
 else
     cat <(cat ${FILE_FILESTATUS} | cut -f 4) <(cat ${FILE_FILESTATUS} | cut -f5) |\
         LC_ALL=C sort -u |\
-        gawk 'BEGIN {n=0} FNR==NR {excluderegex = $0} FNR!=NR { if($1 !~ excluderegex) {print $1}}' <(cat ${FILE_EXCLUDE_PATHS} | tr '\n' '|' | sed 's/|$//') - | grep -v '^$' > ${FILE_FILELIST}
+        gawk 'BEGIN {n=0} FNR==NR {excluderegex = $0} FNR!=NR { if($1 !~ excluderegex) {print $1}}' <(cat ${FILE_EXCLUDE_PATHS} | tr '\n' '|' | sed 's/|$//') - | grep -v '^$' || true > ${FILE_FILELIST}
 fi
 
+echo "checking if any files remain..."
 if [ ! -s "${FILE_FILELIST}" ]; then
     echo "after dropping excluded files, nothing left to analyze"
     unique_files=$(cat <(cat ${FILE_FILESTATUS} | cut -f 4) <(cat ${FILE_FILESTATUS} | cut -f 5) | sort -u | wc -l)
@@ -60,6 +62,7 @@ if [ ! -s "${FILE_FILELIST}" ]; then
 fi
 
 #get some metadata
+echo "getting commit dates..."
 git log --no-renames --first-parent --topo-order --format='%H%x09%ct%x09%P%x09%t%x09%s' $DEFAULT_BRANCH | cut -f 1,2 | LC_ALL=C sort -u > ${FILE_COMMIT_DATES}
 
 # create the list of commits
