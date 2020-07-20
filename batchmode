@@ -1,0 +1,43 @@
+#!/bin/bash
+
+set -eu -o pipefail
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+#stdin are repos to pull down and analyze
+#one per line, owner/repo format
+
+while read NEXTREPO; do
+
+    REPO_FNSAFE=$(echo "$NEXTREPO" | sed 's/\//_/')
+
+    starttime=$(date +%s)
+
+    DATADIR=$(realpath "${REPO_FNSAFE}.data")
+    if [ -d "${DATADIR}" ]; then
+        echo "reusing data for $NEXTREPO"
+    else
+        echo "cloning $NEXTREPO into ${REPO_FNSAFE}"
+        git clone git@github.com:${NEXTREPO}.git ${REPO_FNSAFE}
+    fi
+
+    cd ${REPO_FNSAFE}
+    pwd
+
+    echo "analyzing repo... $DIR/statstool"
+    GITHUB_TOKEN=$GITHUB_TOKEN DATADIR=$DATADIR ${DIR}/statstool
+    echo "done."
+
+    echo "copying statsfile ${DATADIR}/stats.json"
+    cp ${DATADIR}/stats.json ../${REPO_FNSAFE}.stats.json
+
+    echo "cleaning up"
+    cd ..
+    #rm -rf ${REPO_FNSAFE}
+    #rm -rf ${DATADIR}
+
+    repo_time=$(( $(date +%s) - ${starttime}))
+    echo "done with ${NEXTREPO} in ${repo_time}s"
+    echo
+
+done
