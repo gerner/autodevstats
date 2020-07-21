@@ -50,7 +50,7 @@ if [ -z "$FILE_EXCLUDE_PATHS" ]; then
 else
     cat <(cat ${FILE_FILESTATUS} | cut -f 4) <(cat ${FILE_FILESTATUS} | cut -f5) |\
         LC_ALL=C sort -u |\
-        gawk 'BEGIN {n=0} FNR==NR {excluderegex = $0} FNR!=NR { if($1 !~ excluderegex) {print $1}}' <(cat ${FILE_EXCLUDE_PATHS} | tr '\n' '|' | sed 's/|$//') - | grep -v '^$' || true > ${FILE_FILELIST}
+        gawk 'BEGIN {n=0} FNR==NR {excluderegex = $0} FNR!=NR { if($1 !~ excluderegex) {print $1}}' <(cat ${FILE_EXCLUDE_PATHS} | tr '\n' '|' | sed 's/|$//') - | grep -v '^$' > ${FILE_FILELIST} || true
 fi
 
 echo "checking if any files remain..."
