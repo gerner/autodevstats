@@ -163,7 +163,7 @@ if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] ; then
     echo "fetching pull requst and issue data..."
     starttime=$(date +%s)
     echo 'https://api.github.com/repos/'${REPO}'/languages' | GITHUB_TOKEN=$GITHUB_TOKEN ${DIR}/fetch-comments.sh > ${DATADIR}/languages.json
-    echo 'https://api.github.com/repos/'${REPO}'/pulls?state=all&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN MAX_PAGES=${MAX_ALL_PR_PAGES} ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/pulls.gz
+    echo 'https://api.github.com/repos/'${REPO}'/pulls?state=all&sort=created&direction=desc&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN MAX_PAGES=${MAX_ALL_PR_PAGES} ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/pulls.gz
 
     EARLIEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .created_at' | sort -r | tail -n1)
 
