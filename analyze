@@ -144,6 +144,17 @@ cat\
     gawk -F\\t -i ${DIR}/reduce.awk -f ${DIR}/jaccard.awk |\
     jq -c --slurp --raw-input --arg stat_name commit_review_file_overlap -f ${DIR}/gs2json.jq
 
+echo "overlap in files for reviewed vs unreviewed commits (total commits normalized)" > /dev/stderr
+cat\
+    <(cat ${ANALYSISDIR}/unreviewed_commits | gawk -v commits=$(cat ${ANALYSISDIR}/unreviewed_commits ${ANALYSISDIR}/reviewed_commits| wc -l) '{printf("%s\t%s\t%f\n", $1, "unreviewed", 1.0/commits)}')\
+    <(cat ${ANALYSISDIR}/reviewed_commits | gawk -v commits=$(cat ${ANALYSISDIR}/unreviewd_commits ${ANALYSISDIR}/reviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "reviewed", 1.0/commits)}') |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' -\
+        <(cat ${DATADIR}/filestatus | cut -f 1,4 | LC_ALL=C sort) |\
+    gawk 'BEGIN {OFS="\t"} {print $4,$2,$3}' |\
+    LC_ALL=C sort |\
+    gawk -F\\t -i ${DIR}/reduce.awk -f ${DIR}/jaccard.awk |\
+    jq -c --slurp --raw-input --arg stat_name commit_review_file_overlap_by_commits -f ${DIR}/gs2json.jq
+
 echo "lines of code for reviewed vs unreviewed commits by outcome" > /dev/stderr
 cat\
     <(cat ${ANALYSISDIR}/reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
