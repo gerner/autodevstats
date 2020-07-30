@@ -2,6 +2,7 @@
 
 #compute time-bound stats from a autodevstats datadir
 #input env vars:
+#SPAN_DAYS is the desired number of days for analysis
 #EARLIEST_PR a "Z" terminated iso-8601 date string indicating
 #   earliest date to consider in analysis
 #DATADIR the location of autodevstats data fetched and prepped
@@ -14,7 +15,7 @@ set -eu -o pipefail
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
-echo "performing timespan analysis since $EARLIEST_PR" > /dev/stderr
+echo "performing timespan analysis $SPAN_DAYS days since $EARLIEST_PR" > /dev/stderr
 
 #set up state from datadir
 
@@ -87,6 +88,9 @@ AVG_COMMENT_TIME=$(\
 
 #start computing stats
 echo "doing analysis..." > /dev/stderr
+
+#record some analysis params
+printf "{\"stat\":\"analysis_params\", \"data\": {\"earliest_date\": \"%s\", \"span_days\": %d}}\n" ${EARLIEST_PR} ${SPAN_DAYS}
 
 echo "code birthdate summary (during analysis period)" > /dev/stderr
 pv ${DATADIR}/metadata.gz | zcat |\
@@ -302,4 +306,4 @@ cat ${DATADIR}/commits_with_author |\
     gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
     jq --slurp --raw-input --arg stat_name unrev_commits_proportion_by_dev_cdf -f ${DIR}/cdf2json.jq
 
-echo "done with analysis back to ${EARLIEST_PR}" > /dev/stderr
+echo "done with analysis for $SPAN_DAYS days back to ${EARLIEST_PR}" > /dev/stderr

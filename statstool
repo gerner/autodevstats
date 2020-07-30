@@ -882,7 +882,7 @@ echo
 
 for span in $SHORT_SPAN_DAYS $LONG_SPAN_DAYS $MAX_SPAN_DAYS; do
     SPAN_DATE=$(date -d@$(( $(date -d "$LATEST_DATE" +%s) - $(( $span * 86400 )) )) --utc +%Y-%m-%dT%H:%M:%SZ)
-    EARLIEST_PR=$SPAN_DATE DATADIR=$DATADIR ${DIR}/analyze |\
+    SPAN_DAYS=$span EARLIEST_PR=$SPAN_DATE DATADIR=$DATADIR ${DIR}/analyze |\
         jq -c --slurp '{"stat": "analysis_days_'${span}'", "data": . }'\
         >> ${DATADIR}/stats.json
 done
