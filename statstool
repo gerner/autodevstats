@@ -619,37 +619,6 @@ pv ${DATADIR}/metadata.gz | zcat | ag 'live' | cut -f 5 | sort -n |\
     jq -c --slurp --raw-input --arg stat_name code_lifetime_live_cdf -f ${DIR}/cdf2json.jq\
     >> ${DATADIR}/stats.json
 
-echo "code birthdate summary (during analysis period)"
-pv ${DATADIR}/metadata.gz | zcat |\
-    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s)
-    cut -f 4,7 |\
-    gawk -M -f ${DIR}/groupstats.awk |\
-    jq -c --slurp --raw-input --arg stat_name during_pr_code_birthdate_summary -f ${DIR}/gs2json.jq\
-    >> ${DATADIR}/stats.json
-
-echo "code lifetime summary (during analysis period)"
-pv ${DATADIR}/metadata.gz | zcat |\
-    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s)
-    cut -f4,5 |\
-    gawk -M -f ${DIR}/groupstats.awk |\
-    jq -c --slurp --raw-input --arg stat_name during_pr_code_lifetime_summary -f ${DIR}/gs2json.jq\
-    >> ${DATADIR}/stats.json
-
-echo "dead code lifetime distribution (during analysis period)"
-pv ${DATADIR}/metadata.gz | zcat |\
-    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s) |\
-    ag 'died' | cut -f 5 | sort -n |\
-    gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
-    jq -c --slurp --raw-input --arg stat_name during_pr_code_lifetime_died_cdf -f ${DIR}/cdf2json.jq\
-    >> ${DATADIR}/stats.json
-
-echo "live code lifetime distribution (during analysis period)"
-pv ${DATADIR}/metadata.gz | zcat |\
-    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s) |\
-    ag 'live' | cut -f 5 | sort -n |\
-    gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
-    jq -c --slurp --raw-input --arg stat_name during_pr_code_lifetime_live_cdf -f ${DIR}/cdf2json.jq\
-    >> ${DATADIR}/stats.json
 
 #TODO: code lifetime stats per file
 
@@ -826,6 +795,7 @@ cat\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime_live -f ${DIR}/gs2json.jq\
     >> ${DATADIR}/stats.json
+
 echo "lines of code for reviewed vs unreviewed commits"
 cat\
     <(cat ${DATADIR}/reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
