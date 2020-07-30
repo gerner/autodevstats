@@ -184,17 +184,16 @@ if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] ; then
     echo 'https://api.github.com/repos/'${REPO}'/pulls?state=all&sort=created&direction=desc&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN MAX_PAGES=${MAX_ALL_PR_PAGES} ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/pulls.gz
 
     EARLIEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .created_at' | sort -r | tail -n1)
-    #TODO: what if last PR update was much longer ago than latest commit?
-    LATEST_DATE=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .updated_at' | sort | tail -n1)
+    LATEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .updated_at' | sort | tail -n1)
+    LATEST_COMMIT=$(date -d@$(cat commitdates | cut -f 2 | sort -n | tail -n1) +%Y-%m-%dT%H:%M:%SZ --utc)
+
+    LATEST_DATE=$(printf "%s\n%s\n" "${LATEST_PR}" "${LATEST_COMMIT}" | gawk '$1 > max_date { max_date = $1 } END {print max_date}')
     MAX_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $MAX_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
-    LONG_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $LONG_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
-    SHORT_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $SHORT_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
 
     printf "EARLIEST_PR\t%s" $EARLIEST_PR >> ${DATADIR}/times.tsv
-    printf "LATEST_DATE\t%s" $LATEST_DATE >> ${DATADIR}/times.tsv
+    printf "LATEST_PR\t%s" $LATEST_PR >> ${DATADIR}/times.tsv
+    printf "LATEST_COMMIT\t%s" $LATEST_COMMIT >> ${DATADIR}/times.tsv
     printf "MAX_SPAN_DATE\t%s" $MAX_SPAN_DATE >> ${DATADIR}/times.tsv
-    printf "LONG_SPAN_DATE\t%s" $LONG_SPAN_DATE >> ${DATADIR}/times.tsv
-    printf "SHORT_SPAN_DATE\t%s" $SHORT_SPAN_DATE >> ${DATADIR}/times.tsv
 
     #limit to max span of analysis
     if [[ "$EARLIEST_PR" < "$MAX_SPAN_DATE" ]]; then
@@ -262,10 +261,11 @@ elif [ -d "${DATADIR}" ]; then
 
     #catch up on some state we might need
     EARLIEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .created_at' | sort -r | tail -n1)
-    LATEST_DATE=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .updated_at' | sort | tail -n1)
+    LATEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .updated_at' | sort | tail -n1)
+    LATEST_COMMIT=$(date -d@$(cat commitdates | cut -f 2 | sort -n | tail -n1) +%Y-%m-%dT%H:%M:%SZ --utc)
+
+    LATEST_DATE=$(printf "%s\n%s\n" "${LATEST_PR}" "${LATEST_COMMIT}" | gawk '$1 > max_date { max_date = $1 } END {print max_date}')
     MAX_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $MAX_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
-    LONG_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $LONG_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
-    SHORT_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $SHORT_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
 
     #limit to max span of analysis
     if [[ "$EARLIEST_PR" < "$MAX_SPAN_DATE" ]]; then
@@ -275,6 +275,9 @@ else
     echo "${DATADIR} exists but isn't a directory, run without that param and we'll create a directory to hold data"
     exit 1
 fi
+
+LONG_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $LONG_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
+SHORT_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $SHORT_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
 
 #truncate stats time file
 > ${DATADIR}/statstimes.tsv
