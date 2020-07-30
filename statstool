@@ -17,7 +17,18 @@ set -eu -o pipefail
 
 PR_SAMPLESIZE=250
 COMMIT_PR_SAMPLESIZE=200
+
+#an outer bound for how many pages of PRs we'll try to fetch
+#TODO: we'll need to expand this to more reliably capture 1 year of history
 MAX_ALL_PR_PAGES=20
+#an outer bound for how much data we'll pull from github, 2 years
+MAX_SPAN_DAYS=730
+
+#we'll run sets of time-bound analyses:
+#long span = 1 year
+LONG_SPAN_DAYS=365
+#short span = 6 months
+SHORT_SPAN_DAYS=183
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
@@ -98,6 +109,13 @@ if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] ; then
     echo "we'll write data to ${DATADIR}"
     echo
 
+    #truncate timing data
+    > ${DATADIR}/times.tsv
+
+    #record when we start pulling data
+    #this can be used as a good timestamp for when data collection happened
+    data_pull_start_time=$(date +%s)
+    printf "data_pull_start_time\t%d\n" $data_pull_start_time >> ${DATADIR}/times.tsv
 
     echo "checking access to github for this repo..."
     REPO_URL="https://api.github.com/repos/${REPO}"
@@ -166,6 +184,22 @@ if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] ; then
     echo 'https://api.github.com/repos/'${REPO}'/pulls?state=all&sort=created&direction=desc&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN MAX_PAGES=${MAX_ALL_PR_PAGES} ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/pulls.gz
 
     EARLIEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .created_at' | sort -r | tail -n1)
+    #TODO: what if last PR update was much longer ago than latest commit?
+    LATEST_DATE=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .updated_at' | sort | tail -n1)
+    MAX_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $MAX_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
+    LONG_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $LONG_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
+    SHORT_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $SHORT_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
+
+    printf "EARLIEST_PR\t%s" $EARLIEST_PR >> ${DATADIR}/times.tsv
+    printf "LATEST_DATE\t%s" $LATEST_DATE >> ${DATADIR}/times.tsv
+    printf "MAX_SPAN_DATE\t%s" $MAX_SPAN_DATE >> ${DATADIR}/times.tsv
+    printf "LONG_SPAN_DATE\t%s" $LONG_SPAN_DATE >> ${DATADIR}/times.tsv
+    printf "SHORT_SPAN_DATE\t%s" $SHORT_SPAN_DATE >> ${DATADIR}/times.tsv
+
+    #limit to max span of analysis
+    if [[ "$EARLIEST_PR" < "$MAX_SPAN_DATE" ]]; then
+        EARLIEST_PR=$MAX_SPAN_DATE
+    fi
 
     echo 'https://api.github.com/repos/'${REPO}'/pulls/comments?since='${EARLIEST_PR}'&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/pull-comments.gz
     echo 'https://api.github.com/repos/'${REPO}'/issues/comments?since='${EARLIEST_PR}'&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/issue-comments.gz
@@ -219,33 +253,47 @@ if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] ; then
         printf "github_pull_sample_time\t%f\n" ${github_pull_sample_time} >> ${DATADIR}/times.tsv
     fi
 
+    data_pull_time=$(( $(date +%s) - ${data_pull_start_time} ))
+    printf "data_pull_time\t%d\n" $data_pull_time >> ${DATADIR}/times.tsv
+
 elif [ -d "${DATADIR}" ]; then
     echo "we'll process existing data  ${DATADIR}"
     echo
 
     #catch up on some state we might need
     EARLIEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .created_at' | sort -r | tail -n1)
+    LATEST_DATE=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .updated_at' | sort | tail -n1)
+    MAX_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $MAX_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
+    LONG_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $LONG_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
+    SHORT_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $SHORT_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
+
+    #limit to max span of analysis
+    if [[ "$EARLIEST_PR" < "$MAX_SPAN_DATE" ]]; then
+        EARLIEST_PR=$MAX_SPAN_DATE
+    fi
 else
     echo "${DATADIR} exists but isn't a directory, run without that param and we'll create a directory to hold data"
     exit 1
 fi
 
+#truncate stats time file
+> ${DATADIR}/statstimes.tsv
+
 echo "computing stats..."
 starttime=$(date +%s)
+
+printf "stats_start_time\t%d\n" $starttime >> ${DATADIR}/statstimes.tsv
 
 #truncate stats file
 > ${DATADIR}/stats.json
 
 #metadata and identification
 echo "metadata"
-cat ${DATADIR}/repo | jq -f ${DIR}/metadata.jq >> ${DATADIR}/stats.json
+cat ${DATADIR}/repo | jq -c -f ${DIR}/metadata.jq >> ${DATADIR}/stats.json
 
 echo "bytes of code per language"
 cat ${DATADIR}/languages.json | jq -c '{"stat":"languages", data: .}' >> ${DATADIR}/stats.json
 
-
-#truncate stats time file
-> ${DATADIR}/statstimes.tsv
 
 cat ${DATADIR}/times.tsv |\
     jq -c -R --slurp 'split("\n")[0:-1] | map(split("\t") | {(.[0]): (.[1] | tonumber)}) | add | {"stat": "data_times", "data": . }' \
@@ -566,6 +614,38 @@ echo "live code lifetime distribution"
 pv ${DATADIR}/metadata.gz | zcat | ag 'live' | cut -f 5 | sort -n |\
     gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
     jq -c --slurp --raw-input --arg stat_name code_lifetime_live_cdf -f ${DIR}/cdf2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "code birthdate summary (during analysis period)"
+pv ${DATADIR}/metadata.gz | zcat |\
+    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s)
+    cut -f 4,7 |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name during_pr_code_birthdate_summary -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "code lifetime summary (during analysis period)"
+pv ${DATADIR}/metadata.gz | zcat |\
+    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s)
+    cut -f4,5 |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name during_pr_code_lifetime_summary -f ${DIR}/gs2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "dead code lifetime distribution (during analysis period)"
+pv ${DATADIR}/metadata.gz | zcat |\
+    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s) |\
+    ag 'died' | cut -f 5 | sort -n |\
+    gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
+    jq -c --slurp --raw-input --arg stat_name during_pr_code_lifetime_died_cdf -f ${DIR}/cdf2json.jq\
+    >> ${DATADIR}/stats.json
+
+echo "live code lifetime distribution (during analysis period)"
+pv ${DATADIR}/metadata.gz | zcat |\
+    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s) |\
+    ag 'live' | cut -f 5 | sort -n |\
+    gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
+    jq -c --slurp --raw-input --arg stat_name during_pr_code_lifetime_live_cdf -f ${DIR}/cdf2json.jq\
     >> ${DATADIR}/stats.json
 
 #TODO: code lifetime stats per file
