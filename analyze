@@ -1,0 +1,294 @@
+#!/bin/bash
+
+#compute time-bound stats from a autodevstats datadir
+#input env vars:
+#EARLIEST_PR a "Z" terminated iso-8601 date string indicating
+#   earliest date to consider in analysis
+#DATADIR the location of autodevstats data fetched and prepped
+#stats will be written to stdout
+
+#allow passing some environment vairables to override some automated steps
+
+#enter safe-mode (no more undefined variables!)
+set -eu -o pipefail
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
+echo "performing timespan analysis since $EARLIEST_PR" > /dev/stderr
+
+#set up state from datadir
+
+if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] || [ ! -d "${DATADIR}" ]; then
+    echo "DATDIR, \"${DATADIR}\", must exist and be a directory to perform autodevstats analysis" > /dev/stderr
+    exit 1
+fi
+
+ANALYSISDIR=${DATADIR}/analysis
+
+rm -rf ${ANALYSISDIR}
+mkdir ${ANALYSISDIR}
+
+#set up some necessary analysis data
+echo "preparing analysis data..." > /dev/stderr
+
+#gather PR status
+echo "prepping pr statuses..." > /dev/stderr
+pv ${DATADIR}/pulls.gz | zcat |\
+    jq -r '.[] | [.number, if .merged_at != null then "merged" else .state end, .created_at, .closed_at, .merge_commit_sha] | @tsv' |\
+    gawk -F\\t '$3 >= "'${EARLIEST_PR}'"' |\
+    LC_ALL=C sort \
+    > ${ANALYSISDIR}/pr_status
+
+echo "preparing a sample of reviewed and unreviewed commits..." > /dev/stderr
+
+> ${ANALYSISDIR}/reviewed_commits.tmp
+
+#commits with known GH templates
+cat ${DATADIR}/commit_messages |\
+    ag -A1 '^__commit__ [0-9a-f]{40}$' |\
+    gawk 'BEGIN {OFS="\t"} /^__commit__ [a-f0-9]{40}$/ {commit=$2} !/^__commit__ [a-f0-9]{40}$/ {print commit, $0}' |\
+    gawk -F\\t 'BEGIN {OFS="\t"} {if(match($2, /(Merge pull request #([0-9]+))|(\(#([0-9]+)\)$)/, m) > 0) { if(m[2] == "") { print m[4], $1} else { print m[2], $1}}}' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/pr_status |\
+    gawk -F\\t 'BEGIN {OFS="\t"} {print $2, $1}' | LC_ALL=C sort -u\
+    >> ${ANALYSISDIR}/reviewed_commits.tmp
+
+#commits from external merge tools
+cat ${DATADIR}/commit_autolinks |\
+    (ag 'closes' || true) |\
+    gawk -F\\t 'BEGIN {OFS="\t"} {print $2,$1}' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/pr_status |\
+    gawk -F\\t 'BEGIN {OFS="\t"} {print $2,$1}' | LC_ALL=C sort -u\
+    >> ${ANALYSISDIR}/reviewed_commits.tmp
+
+#commits listed in merge_commit_sha for merged PRs
+cat ${ANALYSISDIR}/pr_status |\
+    (ag 'merged' || true) |\
+    gawk -F\\t 'BEGIN {OFS="\t"} {print $5,$1}' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - ${DATADIR}/commitdates |\
+    cut -f 1,2\
+    >> ${ANALYSISDIR}/reviewed_commits.tmp
+
+cat ${ANALYSISDIR}/reviewed_commits.tmp | LC_ALL=C sort -u\
+    > ${ANALYSISDIR}/reviewed_commits
+rm ${ANALYSISDIR}/reviewed_commits.tmp
+
+#the complement, but during the right period
+cat ${DATADIR}/commitdates |\
+    gawk -F\\t '$2 >='$(date -d ${EARLIEST_PR} +%s) | cut -f1 |
+    LC_ALL=C join -v1 - ${ANALYSISDIR}/reviewed_commits \
+    > ${ANALYSISDIR}/unreviewed_commits
+
+AVG_COMMENT_TIME=$(\
+    cat ${DATADIR}/pr_comments_data |\
+    gawk -F\\t '$6 >= "'${EARLIEST_PR}'"' |\
+    gawk -F\\t -i ${DIR}/date.awk -i ${DIR}/reduce.awk -f ${DIR}/extractplies.awk |\
+    gawk -F\\t -i ${DIR}/reduce.awk 'BEGIN {OFS="\t";setkey("1\t2\t3");} function startrun(key) {state=$6;startts=$4;comments=0;sumtime=0;lastts=$4} function reduce(key) {if(comments>0) {print $4-lastts;} comments+=1; lastts=$4} function endrun(key) { }' |\
+    gawk '{s+=$1;n+=1} END {if(n>0) { print s/n } else { print 0} }')
+
+#start computing stats
+echo "doing analysis..." > /dev/stderr
+
+echo "code birthdate summary (during analysis period)" > /dev/stderr
+pv ${DATADIR}/metadata.gz | zcat |\
+    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s) |\
+    cut -f 4,7 |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name during_pr_code_birthdate_summary -f ${DIR}/gs2json.jq
+
+echo "code lifetime summary (during analysis period)" > /dev/stderr
+pv ${DATADIR}/metadata.gz | zcat |\
+    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s) |\
+    cut -f4,5 |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name during_pr_code_lifetime_summary -f ${DIR}/gs2json.jq
+
+echo "dead code lifetime distribution (during analysis period)" > /dev/stderr
+pv ${DATADIR}/metadata.gz | zcat |\
+    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s) |\
+    ag 'died' | cut -f 5 | sort -n |\
+    gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
+    jq -c --slurp --raw-input --arg stat_name during_pr_code_lifetime_died_cdf -f ${DIR}/cdf2json.jq
+
+echo "live code lifetime distribution (during analysis period)" > /dev/stderr
+pv ${DATADIR}/metadata.gz | zcat |\
+    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s) |\
+    ag 'live' | cut -f 5 | sort -n |\
+    gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
+    jq -c --slurp --raw-input --arg stat_name during_pr_code_lifetime_live_cdf -f ${DIR}/cdf2json.jq
+
+echo "comments per dev-PR" > /dev/stderr
+cat ${DATADIR}/pr_comments_data | cut -f 1,2,4 |\
+    gawk 'BEGIN {OFS="\t"} { print $1,$2,$3; print $1,$2,"any"}' |\
+    cut -f 1,3 | LC_ALL=C sort | uniq -c |\
+    gawk 'BEGIN {OFS="\t"} {print $2,$3,$1}' |\
+    LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/pr_status | gawk -F\\t '{printf("%s-%s\t%d\n", $4,$2,$3)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name comment_per_dev_pr -f ${DIR}/gs2json.jq
+
+echo "comments per dev" > /dev/stderr
+cat ${DATADIR}/pr_comments_data | cut -f 1,2,4 |\
+    gawk -F\\t 'BEGIN {OFS="\t"} { print $1,$2,$3; print $1,$2,"any"}' |\
+    LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/pr_status |\
+    gawk -F\\t '$2!="" {printf("%s\t%s-%s\n", $2,$4,$3)}' | sort | uniq -c | gawk '{print $3,$1}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name comment_per_dev -f ${DIR}/gs2json.jq
+
+echo "overlap in files for reviewed vs unreviewed commits" > /dev/stderr
+cat\
+    <(cat ${ANALYSISDIR}/unreviewed_commits | gawk -v commits=$(cat ${ANALYSISDIR}/unreviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "unreviewed", 1.0/commits)}')\
+    <(cat ${ANALYSISDIR}/reviewed_commits | gawk -v commits=$(cat ${ANALYSISDIR}/reviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "reviewed", 1.0/commits)}') |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' -\
+        <(cat ${DATADIR}/filestatus | cut -f 1,4 | LC_ALL=C sort) |\
+    gawk 'BEGIN {OFS="\t"} {print $4,$2,$3}' |\
+    LC_ALL=C sort |\
+    gawk -F\\t -i ${DIR}/reduce.awk -f ${DIR}/jaccard.awk |\
+    jq -c --slurp --raw-input --arg stat_name commit_review_file_overlap -f ${DIR}/gs2json.jq
+
+echo "lines of code for reviewed vs unreviewed commits by outcome" > /dev/stderr
+cat\
+    <(cat ${ANALYSISDIR}/reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
+    <(cat ${ANALYSISDIR}/unreviewed_commits | cut -f1 | gawk '{printf("%s\tunreviewed\n", $1)}') |\
+    LC_ALL=C sort |\
+    LC_ALL=C join <(zcat ${DATADIR}/metadata.gz | cut -f 2,4 | LC_ALL=C sort) - |\
+    LC_ALL=C sort | uniq -c |\
+    gawk '{printf("%s-%s\t%d\n",$4,$3,$1)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name commit_review_size_by_outcome -f ${DIR}/gs2json.jq
+
+echo "dates for reviewed vs unreviewed commits" > /dev/stderr
+cat\
+    <(cat ${ANALYSISDIR}/reviewed_commits | cut -f 1 |\
+        LC_ALL=C join -t$'\t' - ${DATADIR}/commitdates |\
+        gawk -F\\t '{printf("reviewed\t%f\n", $2)}')\
+    <(cat ${ANALYSISDIR}/unreviewed_commits |\
+        LC_ALL=C join -t$'\t' - ${DATADIR}/commitdates |\
+        gawk -F\\t '{printf("unreviewed\t%f\n", $2)}') |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name commit_review_vs_date -f ${DIR}/gs2json.jq
+
+echo "lifetime for code from reviewed vs unreviewed commits" > /dev/stderr
+cat\
+    <(cat ${ANALYSISDIR}/reviewed_commits | cut -f 1 |\
+        gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
+    <(cat ${ANALYSISDIR}/unreviewed_commits |\
+        gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
+    LC_ALL=C sort |\
+    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime -f ${DIR}/gs2json.jq
+
+cat\
+    <(cat ${ANALYSISDIR}/reviewed_commits | cut -f 1 |\
+        gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
+    <(cat ${ANALYSISDIR}/unreviewed_commits |\
+        gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
+    LC_ALL=C sort |\
+    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | ag 'died' | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime_died -f ${DIR}/gs2json.jq
+
+cat\
+    <(cat ${ANALYSISDIR}/reviewed_commits | cut -f 1 |\
+        gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
+    <(cat ${ANALYSISDIR}/unreviewed_commits |\
+        gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
+    LC_ALL=C sort |\
+    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | ag 'live' | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime_live -f ${DIR}/gs2json.jq
+
+echo "devs per PR" > /dev/stderr
+cat ${DATADIR}/pr_comments_data | cut -f 1,2,4 | sort -u |\
+    gawk -F\\t 'BEGIN {OFS="\t"} { print $0; print $1,$2,"any"}' |\
+    cut -f 1,3 | LC_ALL=C sort | uniq -c |\
+    gawk 'BEGIN {OFS="\t"} {print $2,$3,$1}' |\
+    LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/pr_status | gawk -F\\t '{printf("%s-%s\t%d\n", $4,$2,$3)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name dev_per_pr -f ${DIR}/gs2json.jq
+
+echo "commit distribution across authors (during analysis period)" > /dev/stderr
+cat ${DATADIR}/commits_with_author |\
+    LC_ALL=C join -t$'\t' - <(cat ${ANALYSISDIR}/reviewed_commits ${ANALYSISDIR}/unreviewed_commits | LC_ALL=C sort) |\
+    gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
+    gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
+    gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
+    jq --slurp --raw-input --arg stat_name during_pr_commits_proportion_by_dev_cdf -f ${DIR}/cdf2json.jq
+
+echo "PR merge commits during analysis period" > /dev/stderr
+printf "%d\t%d\t%d\t%d\n"\
+    $(cat ${DATADIR}/commit_messages | ag '__commit__ [a-f0-9]{40}' | gawk '{print $2}' | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/commitdates | gawk '$2 >= '$(date -d ${EARLIEST_PR} +%s) | wc -l)\
+    $(cat ${DATADIR}/commit_messages | (grep -E -o 'Merge pull request #[0-9]+ from' || true) | grep -o '[0-9]*' | LC_ALL=C sort | LC_ALL=C join - ${ANALYSISDIR}/pr_status | wc -l)\
+    $(cat ${DATADIR}/commit_messages | (grep -E -A1 '^__commit__ [a-f0-9]{40}$' || true) | (grep -E -o ' \(#[0-9]+\)$' || true) | grep -o '[0-9]*' | LC_ALL=C sort | LC_ALL=C join - ${ANALYSISDIR}/pr_status | wc -l)\
+    $(cat ${DATADIR}/commit_autolinks | grep 'close' | cut -f 2 | LC_ALL=C sort | LC_ALL=C join - ${ANALYSISDIR}/pr_status | wc -l) |\
+    jq -c --slurp --raw-input 'split("\t") | {"stat":"gh_merges_during_prs", "data":{"commits":(.[0]|tonumber), "gh_merges":(.[1]|tonumber), "gh_likely_merge":(.[2]|tonumber), "likely_external_merge":(.[3]|tonumber)}}'
+
+echo "comparing GH commit pull association with commit message analysis" > /dev/stderr
+cat ${DATADIR}/commit_pulls |\
+    sed -E 's/^https:\/\/api.github.com\/repos\/[^\/]*\/[^\/]*\/commits\/([a-f0-9]{40})\/pulls/\1/' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - <(cat ${ANALYSISDIR}/reviewed_commits ${ANALYSISDIR}/unreviewed_commits | LC_ALL=C sort) |\
+    jq -r -R 'split("\t") | [.[0], (.[1] | fromjson | length), .[2]] | @tsv' |\
+    gawk -F\\t '$3=="" {printf("unreviewed\t%d\n",$2>0)} $3!="" {printf("reviewed\t%d\n",$2>0)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name gh_rev_vs_commit_rev -f ${DIR}/gs2json.jq
+
+cat ${DATADIR}/commit_pulls |\
+    sed -E 's/^https:\/\/api.github.com\/repos\/[^\/]*\/[^\/]*\/commits\/([a-f0-9]{40})\/pulls/\1/' |\
+    LC_ALL=C sort | LC_ALL=C join -t$'\t' - <(cat ${ANALYSISDIR}/reviewed_commits ${ANALYSISDIR}/unreviewed_commits | LC_ALL=C sort) |\
+    jq -r -R 'split("\t") | [.[0], (.[2] as $prnumber | .[1] | fromjson | map(.number) | select(($prnumber // "0" | tonumber))|length), .[2]] | @tsv' |\
+    gawk -F\\t '$3=="" {printf("unreviewed\t%d\n",$2>0)} $3!="" {printf("reviewed\t%d\n",$2>0)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name gh_rev_vs_commit_rev_strict -f ${DIR}/gs2json.jq
+
+echo "PR comment count summary" > /dev/stderr
+cat ${DATADIR}/commentcounts | LC_ALL=C sort | join -t$'\t' ${ANALYSISDIR}/pr_status - | gawk -F\\t '{printf("%s-%s\t%d\n", $2, $6, $7)}' |\
+    gawk -F\\t -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name pr_comment_summary -f ${DIR}/gs2json.jq
+
+echo "PR lifetime summary" > /dev/stderr
+cat ${ANALYSISDIR}/pr_status | gawk -F\\t -i ${DIR}/date.awk 'BEGIN {OFS="\t"} $2=="open" {print $2, systime() - parsedate($3)} $2!="open" { print $2, parsedate($4) - parsedate($3)}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name pr_lifetime_summary -f ${DIR}/gs2json.jq
+echo "PR cycle count per PR by outcome" > /dev/stderr
+cat ${DATADIR}/pr_comments_data |\
+    gawk -F\\t '$6 >= "'${EARLIEST_PR}'"' |\
+    gawk -F\\t -i ${DIR}/date.awk -i ${DIR}/reduce.awk -f ${DIR}/extractplies.awk |\
+    cut -f 1,2,3,6 | uniq | cut -f1,4 | uniq -c | gawk '{print $3,$1}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name pr_plies_per_pr -f ${DIR}/gs2json.jq
+
+echo "PR active review time by outcome" > /dev/stderr
+cat ${DATADIR}/pr_comments_data |\
+    gawk -F\\t '$6 >= "'${EARLIEST_PR}'"' |\
+    gawk -F\\t -i ${DIR}/date.awk -i ${DIR}/reduce.awk -f ${DIR}/extractplies.awk |\
+    gawk -F\\t -i ${DIR}/reduce.awk -v avgctime=$AVG_COMMENT_TIME 'BEGIN {OFS="\t";setkey("1\t2\t3");} function startrun(key) {state=$6;startts=$4;comments=0;lastts=$4} function reduce(key) { comments+=1;lastts=$4} function endrun(key) { print key[1], key[2], key[3], comments, comments*avgctime, lastts-startts, state}' |\
+    gawk -F\\t -i ${DIR}/reduce.awk 'BEGIN {OFS="\t";setkey("1");} function startrun(key) {estimate=0;flr=0;state=$7} function reduce(key) {estimate+=$5;flr+=$6} function endrun(key) { printf("%s-estimate\t%f\n", state, estimate);printf("%s-floorwzero\t%f\n", state, flr);}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name pr_time_per_pr -f ${DIR}/gs2json.jq
+
+echo "PR active review time by outcome including zero engagement reviews" > /dev/stderr
+cat ${DATADIR}/pr_comments_data |\
+    gawk -F\\t '$6 >= "'${EARLIEST_PR}'"' |\
+    gawk -F\\t -i ${DIR}/date.awk -i ${DIR}/reduce.awk -f ${DIR}/extractplies.awk |\
+    gawk -F\\t -i ${DIR}/reduce.awk -v avgctime=$AVG_COMMENT_TIME 'BEGIN {OFS="\t";setkey("1\t2\t3");} function startrun(key) {state=$6;startts=$4;comments=0;lastts=$4} function reduce(key) { comments+=1;lastts=$4} function endrun(key) { print key[1], key[2], key[3], comments, comments*avgctime, lastts-startts, state}' |\
+    LC_ALL=C join -t$'\t' -o 0,2.2,2.3,2.4,2.5,2.6,1.2 -a1 ${ANALYSISDIR}/pr_status - |\
+    gawk -F\\t -i ${DIR}/reduce.awk 'BEGIN {OFS="\t";setkey("1");} function startrun(key) {estimate=0;flr=0;state=$7} function reduce(key) {estimate+=$5;flr+=$6} function endrun(key) { printf("%s-estimate\t%f\n", state, estimate);printf("%s-floorwzero\t%f\n", state, flr);}' |\
+    gawk -M -f ${DIR}/groupstats.awk |\
+    jq -c --slurp --raw-input --arg stat_name pr_time_per_pr_wzero -f ${DIR}/gs2json.jq
+
+echo "commit distribution across authors (reviewed)" > /dev/stderr
+cat ${DATADIR}/commits_with_author |\
+    LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/reviewed_commits |\
+    gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
+    gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
+    gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
+    jq --slurp --raw-input --arg stat_name rev_commits_proportion_by_dev_cdf -f ${DIR}/cdf2json.jq
+
+echo "commit distribution across authors (unreviewed)" > /dev/stderr
+cat ${DATADIR}/commits_with_author |\
+    LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/unreviewed_commits |\
+    gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
+    gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
+    gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
+    jq --slurp --raw-input --arg stat_name unrev_commits_proportion_by_dev_cdf -f ${DIR}/cdf2json.jq
+
+echo "done with analysis back to ${EARLIEST_PR}" > /dev/stderr

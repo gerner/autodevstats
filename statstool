@@ -185,10 +185,10 @@ if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] ; then
 
     EARLIEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .created_at' | sort -r | tail -n1)
     LATEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .updated_at' | sort | tail -n1)
-    LATEST_COMMIT=$(date -d@$(cat commitdates | cut -f 2 | sort -n | tail -n1) +%Y-%m-%dT%H:%M:%SZ --utc)
+    LATEST_COMMIT=$(date -d@$(cat commitdates | cut -f 2 | sort -n | tail -n1) --utc +%Y-%m-%dT%H:%M:%SZ)
 
     LATEST_DATE=$(printf "%s\n%s\n" "${LATEST_PR}" "${LATEST_COMMIT}" | gawk '$1 > max_date { max_date = $1 } END {print max_date}')
-    MAX_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $MAX_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
+    MAX_SPAN_DATE=$(date -d@$(( $(date -d "$LATEST_DATE" +%s) - $(( $MAX_SPAN_DAYS * 86400 )) )) --utc +%Y-%m-%dT%H:%M:%SZ)
 
     printf "EARLIEST_PR\t%s" $EARLIEST_PR >> ${DATADIR}/times.tsv
     printf "LATEST_PR\t%s" $LATEST_PR >> ${DATADIR}/times.tsv
@@ -262,10 +262,12 @@ elif [ -d "${DATADIR}" ]; then
     #catch up on some state we might need
     EARLIEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .created_at' | sort -r | tail -n1)
     LATEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .updated_at' | sort | tail -n1)
-    LATEST_COMMIT=$(date -d@$(cat commitdates | cut -f 2 | sort -n | tail -n1) +%Y-%m-%dT%H:%M:%SZ --utc)
+    echo "foo"
+    LATEST_COMMIT=$(date -d@$(cat commitdates | cut -f 2 | sort -n | tail -n1) --utc +%Y-%m-%dT%H:%M:%SZ)
+    echo "bar"
 
     LATEST_DATE=$(printf "%s\n%s\n" "${LATEST_PR}" "${LATEST_COMMIT}" | gawk '$1 > max_date { max_date = $1 } END {print max_date}')
-    MAX_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $MAX_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
+    MAX_SPAN_DATE=$(date -d@$(( $(date -d "$LATEST_DATE" +%s) - $(( $MAX_SPAN_DAYS * 86400 )) )) --utc +%Y-%m-%dT%H:%M:%SZ)
 
     #limit to max span of analysis
     if [[ "$EARLIEST_PR" < "$MAX_SPAN_DATE" ]]; then
@@ -276,8 +278,6 @@ else
     exit 1
 fi
 
-LONG_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $LONG_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
-SHORT_SPAN_DATE=$(date @$(( $(date -d "$LATEST_DATE" +%s) - $(( $SHORT_SPAN_DAYS * 86400 )) )) +%Y-%m-%dT%H:%M:%SZ --utc)
 
 #truncate stats time file
 > ${DATADIR}/statstimes.tsv
@@ -876,6 +876,17 @@ cat ${DATADIR}/pr_sample_commits_parsed |\
     jq -c --slurp --raw-input --arg stat_name commit_relative_age -f ${DIR}/gs2json.jq\
     >> ${DATADIR}/stats.json
 
+echo
+echo "computing timespan limited stats..."
+echo
+
+for span in $SHORT_SPAN_DAYS $LONG_SPAN_DAYS $MAX_SPAN_DAYS; do
+    SPAN_DATE=$(date -d@$(( $(date -d "$LATEST_DATE" +%s) - $(( $span * 86400 )) )) --utc +%Y-%m-%dT%H:%M:%SZ)
+    EARLIEST_PR=$SPAN_DATE DATADIR=$DATADIR ${DIR}/analyze |\
+        jq -c --slurp '{"stat": "analysis_days_'${span}'", "data": . }'\
+        >> ${DATADIR}/stats.json
+done
+
 compute_stats_time=$(( $(date +%s) - ${starttime}))
 printf "stats_time\t%f\n" $compute_stats_time >> ${DATADIR}/statstimes.tsv
 cat ${DATADIR}/statstimes.tsv |\
@@ -884,8 +895,6 @@ cat ${DATADIR}/statstimes.tsv |\
 
 echo "done computing stats in in ${compute_stats_time}s."
 echo
-
-
 
 echo "Thank You! Please email back the file ${DATADIR}/stats.json"
 
