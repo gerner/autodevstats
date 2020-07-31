@@ -617,14 +617,14 @@ pv ${DATADIR}/metadata.gz | zcat | ag 'live' | cut -f 5 | sort -n |\
 
 #TODO: code lifetime stats per file
 
-echo "code lifetime from merged PR summary"
-cat ${DATADIR}/pr_status | (grep 'merged' || true) |\
-    cut -f 5 | LC_ALL=C sort |\
-    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | gawk -F\\t 'BEGIN {OFS="\t"} {print $2, $4, $5}' | LC_ALL=C sort) |\
-    gawk -F\\t 'BEGIN {OFS="\t"} {printf("%s\t%s\n", $2, $3)}' |\
-    gawk -M -f ${DIR}/groupstats.awk |\
-    jq -c --slurp --raw-input --arg stat_name code_lifetime_merged_pr_summary -f ${DIR}/gs2json.jq\
-    >> ${DATADIR}/stats.json
+#echo "code lifetime from merged PR summary"
+#cat ${DATADIR}/pr_status | (grep 'merged' || true) |\
+#    cut -f 5 | LC_ALL=C sort |\
+#    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | gawk -F\\t 'BEGIN {OFS="\t"} {print $2, $4, $5}' | LC_ALL=C sort) |\
+#    gawk -F\\t 'BEGIN {OFS="\t"} {printf("%s\t%s\n", $2, $3)}' |\
+#    gawk -M -f ${DIR}/groupstats.awk |\
+#    jq -c --slurp --raw-input --arg stat_name code_lifetime_merged_pr_summary -f ${DIR}/gs2json.jq\
+#    >> ${DATADIR}/stats.json
 
 #TODO: need to add in code that is merged but not reviewed (as zeros? as different case?)
 #TODO: need to sample these cases
@@ -766,63 +766,63 @@ cat\
     jq -c --slurp --raw-input --arg stat_name commit_review_file_overlap -f ${DIR}/gs2json.jq\
     >> ${DATADIR}/stats.json
 
-echo "lifetime for code from reviewed vs unreviewed commits"
-cat\
-    <(cat ${DATADIR}/reviewed_commits | cut -f 1 |\
-        gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
-    <(cat ${DATADIR}/unreviewed_commits |\
-        gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
-    LC_ALL=C sort |\
-    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
-    gawk -M -f ${DIR}/groupstats.awk |\
-    jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime -f ${DIR}/gs2json.jq\
-    >> ${DATADIR}/stats.json
+#echo "lifetime for code from reviewed vs unreviewed commits"
+#cat\
+#    <(cat ${DATADIR}/reviewed_commits | cut -f 1 |\
+#        gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
+#    <(cat ${DATADIR}/unreviewed_commits |\
+#        gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
+#    LC_ALL=C sort |\
+#    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+#    gawk -M -f ${DIR}/groupstats.awk |\
+#    jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime -f ${DIR}/gs2json.jq\
+#    >> ${DATADIR}/stats.json
 
-cat\
-    <(cat ${DATADIR}/reviewed_commits | cut -f 1 |\
-        gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
-    <(cat ${DATADIR}/unreviewed_commits |\
-        gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
-    LC_ALL=C sort |\
-    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | ag 'died' | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
-    gawk -M -f ${DIR}/groupstats.awk |\
-    jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime_died -f ${DIR}/gs2json.jq\
-    >> ${DATADIR}/stats.json
+#cat\
+#    <(cat ${DATADIR}/reviewed_commits | cut -f 1 |\
+#        gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
+#    <(cat ${DATADIR}/unreviewed_commits |\
+#        gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
+#    LC_ALL=C sort |\
+#    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | ag 'died' | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+#    gawk -M -f ${DIR}/groupstats.awk |\
+#    jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime_died -f ${DIR}/gs2json.jq\
+#    >> ${DATADIR}/stats.json
 
-cat\
-    <(cat ${DATADIR}/reviewed_commits | cut -f 1 |\
-        gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
-    <(cat ${DATADIR}/unreviewed_commits |\
-        gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
-    LC_ALL=C sort |\
-    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | ag 'live' | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
-    gawk -M -f ${DIR}/groupstats.awk |\
-    jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime_live -f ${DIR}/gs2json.jq\
-    >> ${DATADIR}/stats.json
+#cat\
+#    <(cat ${DATADIR}/reviewed_commits | cut -f 1 |\
+#        gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
+#    <(cat ${DATADIR}/unreviewed_commits |\
+#        gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
+#    LC_ALL=C sort |\
+#    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | ag 'live' | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+#    gawk -M -f ${DIR}/groupstats.awk |\
+#    jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime_live -f ${DIR}/gs2json.jq\
+#    >> ${DATADIR}/stats.json
 
-echo "lines of code for reviewed vs unreviewed commits"
-cat\
-    <(cat ${DATADIR}/reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
-    <(cat ${DATADIR}/unreviewed_commits | cut -f1 | gawk '{printf("%s\tunreviewed\n", $1)}') |\
-    LC_ALL=C sort |\
-    LC_ALL=C join <(zcat ${DATADIR}/metadata.gz | cut -f 2 | LC_ALL=C sort) - |\
-    LC_ALL=C sort | uniq -c |\
-    gawk '{printf("%s\t%d\n",$3,$1)}' |\
-    gawk -M -f ${DIR}/groupstats.awk |\
-    jq -c --slurp --raw-input --arg stat_name commit_review_size -f ${DIR}/gs2json.jq\
-    >> ${DATADIR}/stats.json
+#echo "lines of code for reviewed vs unreviewed commits"
+#cat\
+#    <(cat ${DATADIR}/reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
+#    <(cat ${DATADIR}/unreviewed_commits | cut -f1 | gawk '{printf("%s\tunreviewed\n", $1)}') |\
+#    LC_ALL=C sort |\
+#    LC_ALL=C join <(zcat ${DATADIR}/metadata.gz | cut -f 2 | LC_ALL=C sort) - |\
+#    LC_ALL=C sort | uniq -c |\
+#    gawk '{printf("%s\t%d\n",$3,$1)}' |\
+#    gawk -M -f ${DIR}/groupstats.awk |\
+#    jq -c --slurp --raw-input --arg stat_name commit_review_size -f ${DIR}/gs2json.jq\
+#    >> ${DATADIR}/stats.json
 
-echo "lines of code for reviewed vs unreviewed commits by outcome"
-cat\
-    <(cat ${DATADIR}/reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
-    <(cat ${DATADIR}/unreviewed_commits | cut -f1 | gawk '{printf("%s\tunreviewed\n", $1)}') |\
-    LC_ALL=C sort |\
-    LC_ALL=C join <(zcat ${DATADIR}/metadata.gz | cut -f 2,4 | LC_ALL=C sort) - |\
-    LC_ALL=C sort | uniq -c |\
-    gawk '{printf("%s-%s\t%d\n",$4,$3,$1)}' |\
-    gawk -M -f ${DIR}/groupstats.awk |\
-    jq -c --slurp --raw-input --arg stat_name commit_review_size_by_outcome -f ${DIR}/gs2json.jq\
-    >> ${DATADIR}/stats.json
+#echo "lines of code for reviewed vs unreviewed commits by outcome"
+#cat\
+#    <(cat ${DATADIR}/reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
+#    <(cat ${DATADIR}/unreviewed_commits | cut -f1 | gawk '{printf("%s\tunreviewed\n", $1)}') |\
+#    LC_ALL=C sort |\
+#    LC_ALL=C join <(zcat ${DATADIR}/metadata.gz | cut -f 2,4 | LC_ALL=C sort) - |\
+#    LC_ALL=C sort | uniq -c |\
+#    gawk '{printf("%s-%s\t%d\n",$4,$3,$1)}' |\
+#    gawk -M -f ${DIR}/groupstats.awk |\
+#    jq -c --slurp --raw-input --arg stat_name commit_review_size_by_outcome -f ${DIR}/gs2json.jq\
+#    >> ${DATADIR}/stats.json
 
 #TODO: commit structuredness within a PR stats
 #length of PR commit messages by outcome
