@@ -122,13 +122,13 @@ pv ${ANALYSISDIR}/metadata.gz | zcat |\
 
 echo "dead code lifetime distribution (during analysis period)" > /dev/stderr
 pv ${ANALYSISDIR}/metadata.gz | zcat |\
-    ag 'died' | cut -f 5 | sort -n |\
+    (ag 'died' || true) | cut -f 5 | sort -n |\
     gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
     jq -c --slurp --raw-input --arg stat_name during_pr_code_lifetime_died_cdf -f ${DIR}/cdf2json.jq
 
 echo "live code lifetime distribution (during analysis period)" > /dev/stderr
 pv ${ANALYSISDIR}/metadata.gz | zcat |\
-    ag 'live' | cut -f 5 | sort -n |\
+    (ag 'live' || true) | cut -f 5 | sort -n |\
     gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
     jq -c --slurp --raw-input --arg stat_name during_pr_code_lifetime_live_cdf -f ${DIR}/cdf2json.jq
 
@@ -163,7 +163,7 @@ cat\
 echo "overlap in files for reviewed vs unreviewed commits (total commits normalized)" > /dev/stderr
 cat\
     <(cat ${ANALYSISDIR}/unreviewed_commits | gawk -v commits=$(cat ${ANALYSISDIR}/unreviewed_commits ${ANALYSISDIR}/reviewed_commits| wc -l) '{printf("%s\t%s\t%f\n", $1, "unreviewed", 1.0/commits)}')\
-    <(cat ${ANALYSISDIR}/reviewed_commits | gawk -v commits=$(cat ${ANALYSISDIR}/unreviewd_commits ${ANALYSISDIR}/reviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "reviewed", 1.0/commits)}') |\
+    <(cat ${ANALYSISDIR}/reviewed_commits | gawk -v commits=$(cat ${ANALYSISDIR}/unreviewed_commits ${ANALYSISDIR}/reviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "reviewed", 1.0/commits)}') |\
     LC_ALL=C sort | LC_ALL=C join -t$'\t' -\
         <(cat ${DATADIR}/filestatus | cut -f 1,4 | LC_ALL=C sort) |\
     gawk 'BEGIN {OFS="\t"} {print $4,$2,$3}' |\
@@ -176,7 +176,7 @@ cat\
     <(cat ${ANALYSISDIR}/reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
     <(cat ${ANALYSISDIR}/unreviewed_commits | cut -f1 | gawk '{printf("%s\tunreviewed\n", $1)}') |\
     LC_ALL=C sort |\
-    LC_ALL=C join <(zcat ${ANALYSISDIR}/metadata.gz | cut -f 2,4 | LC_ALL=C sort) - |\
+    LC_ALL=C join <(pv ${ANALYSISDIR}/metadata.gz | zcat | cut -f 2,4 | LC_ALL=C sort) - |\
     LC_ALL=C sort | uniq -c |\
     gawk '{printf("%s-%s\t%d\n",$4,$3,$1)}' |\
     gawk -M -f ${DIR}/groupstats.awk |\
@@ -200,7 +200,7 @@ cat\
     <(cat ${ANALYSISDIR}/unreviewed_commits |\
         gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
     LC_ALL=C sort |\
-    LC_ALL=C join -t$'\t' - <(zcat ${ANALYSISDIR}/metadata.gz | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+    LC_ALL=C join -t$'\t' - <(pv ${ANALYSISDIR}/metadata.gz | zcat | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime -f ${DIR}/gs2json.jq
 
@@ -210,7 +210,7 @@ cat\
     <(cat ${ANALYSISDIR}/unreviewed_commits |\
         gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
     LC_ALL=C sort |\
-    LC_ALL=C join -t$'\t' - <(zcat ${ANALYSISDIR}/metadata.gz | ag 'died' | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+    LC_ALL=C join -t$'\t' - <(pv ${ANALYSISDIR}/metadata.gz | zcat | (ag 'died' || true) | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime_died -f ${DIR}/gs2json.jq
 
@@ -220,7 +220,7 @@ cat\
     <(cat ${ANALYSISDIR}/unreviewed_commits |\
         gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
     LC_ALL=C sort |\
-    LC_ALL=C join -t$'\t' - <(zcat ${ANALYSISDIR}/metadata.gz | ag 'live' | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+    LC_ALL=C join -t$'\t' - <(pv ${ANALYSISDIR}/metadata.gz | zcat | (ag 'live' || true) | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime_live -f ${DIR}/gs2json.jq
 
@@ -319,3 +319,4 @@ cat ${DATADIR}/commits_with_author |\
     jq --slurp --raw-input --arg stat_name unrev_commits_proportion_by_dev_cdf -f ${DIR}/cdf2json.jq
 
 echo "done with analysis for $SPAN_DAYS days back to ${EARLIEST_PR}" > /dev/stderr
+echo
