@@ -20,15 +20,11 @@ COMMIT_PR_SAMPLESIZE=200
 
 #an outer bound for how many pages of PRs we'll try to fetch
 #TODO: we'll need to expand this to more reliably capture 1 year of history
-MAX_ALL_PR_PAGES=20
-#an outer bound for how much data we'll pull from github, 2 years
+MAX_ALL_PR_PAGES=60
+#an outer bound for how much data we'll pull from github, 3 years
 MAX_SPAN_DAYS=730
-
 #we'll run sets of time-bound analyses:
-#long span = 1 year
-LONG_SPAN_DAYS=365
-#short span = 6 months
-SHORT_SPAN_DAYS=183
+SPAN_DAYS="183 365 730 1460"
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
@@ -172,6 +168,7 @@ if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] ; then
     echo "preparing commit messages..."
     git log "${DEFAULT_BRANCH}" --first-parent --format='__commit__ %H%x0A%B' > ${DATADIR}/commit_messages
     git log "${DEFAULT_BRANCH}" --format='%H%x09%ae' | LC_ALL=C sort > ${DATADIR}/commits_with_author
+    git log "${DEFAULT_BRANCH}" --topo-order --format='%H%x09%P%x09%ce%x09%ct%x09%ae%x09%at' | gzip -c > ${DATADIR}/commit_graph.gz
     echo "done."
 
 
@@ -185,7 +182,7 @@ if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] ; then
 
     EARLIEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .created_at' | sort -r | tail -n1)
     LATEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .updated_at' | sort | tail -n1)
-    LATEST_COMMIT=$(date -d@$(cat commitdates | cut -f 2 | sort -n | tail -n1) --utc +%Y-%m-%dT%H:%M:%SZ)
+    LATEST_COMMIT=$(date -d@$(cat ${DATADIR}/commitdates | cut -f 2 | sort -n | tail -n1) --utc +%Y-%m-%dT%H:%M:%SZ)
 
     LATEST_DATE=$(printf "%s\n%s\n" "${LATEST_PR}" "${LATEST_COMMIT}" | gawk '$1 > max_date { max_date = $1 } END {print max_date}')
     MAX_SPAN_DATE=$(date -d@$(( $(date -d "$LATEST_DATE" +%s) - $(( $MAX_SPAN_DAYS * 86400 )) )) --utc +%Y-%m-%dT%H:%M:%SZ)
@@ -262,9 +259,7 @@ elif [ -d "${DATADIR}" ]; then
     #catch up on some state we might need
     EARLIEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .created_at' | sort -r | tail -n1)
     LATEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .updated_at' | sort | tail -n1)
-    echo "foo"
-    LATEST_COMMIT=$(date -d@$(cat commitdates | cut -f 2 | sort -n | tail -n1) --utc +%Y-%m-%dT%H:%M:%SZ)
-    echo "bar"
+    LATEST_COMMIT=$(date -d@$(cat ${DATADIR}/commitdates | cut -f 2 | sort -n | tail -n1) --utc +%Y-%m-%dT%H:%M:%SZ)
 
     LATEST_DATE=$(printf "%s\n%s\n" "${LATEST_PR}" "${LATEST_COMMIT}" | gawk '$1 > max_date { max_date = $1 } END {print max_date}')
     MAX_SPAN_DATE=$(date -d@$(( $(date -d "$LATEST_DATE" +%s) - $(( $MAX_SPAN_DAYS * 86400 )) )) --utc +%Y-%m-%dT%H:%M:%SZ)
@@ -674,13 +669,22 @@ cat ${DATADIR}/pr_status |\
     cut -f 1,2\
     >> ${DATADIR}/reviewed_commits.tmp
 
-cat ${DATADIR}/reviewed_commits.tmp | LC_ALL=C sort -u\
+#cascade review to commits with same committer and commit time
+zcat ${DATADIR}/commit_graph.gz |\
+    gawk -F\\t '{printf("%s\t%d\n", $0, NR)}' |\
+    LC_ALL=C sort |\
+    join -t$'\t' -a2 -o0,1.2,2.3,2.4,2.5,2.7 <(cat ${DATADIR}/reviewed_commits.tmp | LC_ALL=C sort) - |\
+    sort -t$'\t' -k4r,4r -k3,3 -k6n,6n |\
+    gawk -F\\t '$2 == "" && $3 == last_ce && $4 == last_ct && last_pr != "" {printf("%s\t%s\n", $1, last_pr)} $2 == "" && $3 != last_cs || $4 != last_ct { last_pr = "" } $2 != "" {printf("%s\t%s\n", $1, $2)} $2!="" && ($3 != last_cs || $4 != last_ct) { last_pr=$2;last_ce=$3;last_ct=$4}' |\
+    LC_ALL=C sort -u\
     > ${DATADIR}/reviewed_commits
+
 rm ${DATADIR}/reviewed_commits.tmp
 
 #the complement, but during the right period
-cat ${DATADIR}/commitdates |\
-    gawk -F\\t '$2 >='$(date -d ${EARLIEST_PR} +%s) | cut -f1 |
+zcat ${DATADIR}/commit_graph.gz |\
+    gawk -F\\t '$4 >='$(date -d ${EARLIEST_PR} +%s) | cut -f1 |\
+    LC_ALL=C sort |\
     LC_ALL=C join -v1 - ${DATADIR}/reviewed_commits \
     > ${DATADIR}/unreviewed_commits
 
@@ -880,7 +884,7 @@ echo
 echo "computing timespan limited stats..."
 echo
 
-for span in $SHORT_SPAN_DAYS $LONG_SPAN_DAYS $MAX_SPAN_DAYS; do
+for span in $SPAN_DAYS; do
     SPAN_DATE=$(date -d@$(( $(date -d "$LATEST_DATE" +%s) - $(( $span * 86400 )) )) --utc +%Y-%m-%dT%H:%M:%SZ)
     SPAN_DAYS=$span EARLIEST_PR=$SPAN_DATE DATADIR=$DATADIR ${DIR}/analyze |\
         jq -c --slurp '{"stat": "analysis_days_'${span}'", "data": . }'\
