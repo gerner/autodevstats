@@ -69,13 +69,23 @@ cat ${ANALYSISDIR}/pr_status |\
     cut -f 1,2\
     >> ${ANALYSISDIR}/reviewed_commits.tmp
 
-cat ${ANALYSISDIR}/reviewed_commits.tmp | LC_ALL=C sort -u\
+#cascade review to commits with same committer and commit time
+zcat ${DATADIR}/commit_graph.gz |\
+    gawk -F\\t '{printf("%s\t%d\n", $0, NR)}' |\
+    LC_ALL=C sort |\
+    join -t$'\t' -a2 -o0,1.2,2.3,2.4,2.5,2.7 <(cat ${ANALYSISDIR}/reviewed_commits.tmp | LC_ALL=C sort) - |\
+    sort -t$'\t' -k4r,4r -k3,3 -k6n,6n |\
+    gawk -F\\t '$2 == "" && $3 == last_ce && $4 == last_ct && last_pr != "" {printf("%s\t%s\n", $1, last_pr)} $2 == "" && $3 != last_cs || $4 != last_ct { last_pr = "" } $2 != "" {printf("%s\t%s\n", $1, $2)} $2!="" && ($3 != last_cs || $4 != last_ct) { last_pr=$2;last_ce=$3;last_ct=$4}' |\
+    LC_ALL=C sort -u\
     > ${ANALYSISDIR}/reviewed_commits
+
 rm ${ANALYSISDIR}/reviewed_commits.tmp
 
+
 #the complement, but during the right period
-cat ${DATADIR}/commitdates |\
-    gawk -F\\t '$2 >='$(date -d ${EARLIEST_PR} +%s) | cut -f1 |
+zcat ${DATADIR}/commit_graph.gz |\
+    gawk -F\\t '$4 >='$(date -d ${EARLIEST_PR} +%s) | cut -f1 |\
+    LC_ALL=C sort |\
     LC_ALL=C join -v1 - ${ANALYSISDIR}/reviewed_commits \
     > ${ANALYSISDIR}/unreviewed_commits
 
@@ -86,6 +96,12 @@ AVG_COMMENT_TIME=$(\
     gawk -F\\t -i ${DIR}/reduce.awk 'BEGIN {OFS="\t";setkey("1\t2\t3");} function startrun(key) {state=$6;startts=$4;comments=0;sumtime=0;lastts=$4} function reduce(key) {if(comments>0) {print $4-lastts;} comments+=1; lastts=$4} function endrun(key) { }' |\
     gawk '{s+=$1;n+=1} END {if(n>0) { print s/n } else { print 0} }')
 
+echo "filtering LOC metadata..." > /dev/stderr
+pv ${DATADIR}/metadata.gz | zcat |\
+    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s) |\
+    gzip -c\
+    > ${ANALYSISDIR}/metadata.gz
+
 #start computing stats
 echo "doing analysis..." > /dev/stderr
 
@@ -93,29 +109,25 @@ echo "doing analysis..." > /dev/stderr
 printf "{\"stat\":\"analysis_params\", \"data\": {\"earliest_date\": \"%s\", \"span_days\": %d}}\n" ${EARLIEST_PR} ${SPAN_DAYS}
 
 echo "code birthdate summary (during analysis period)" > /dev/stderr
-pv ${DATADIR}/metadata.gz | zcat |\
-    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s) |\
+pv ${ANALYSISDIR}/metadata.gz | zcat |\
     cut -f 4,7 |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name during_pr_code_birthdate_summary -f ${DIR}/gs2json.jq
 
 echo "code lifetime summary (during analysis period)" > /dev/stderr
-pv ${DATADIR}/metadata.gz | zcat |\
-    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s) |\
+pv ${ANALYSISDIR}/metadata.gz | zcat |\
     cut -f4,5 |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name during_pr_code_lifetime_summary -f ${DIR}/gs2json.jq
 
 echo "dead code lifetime distribution (during analysis period)" > /dev/stderr
-pv ${DATADIR}/metadata.gz | zcat |\
-    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s) |\
+pv ${ANALYSISDIR}/metadata.gz | zcat |\
     ag 'died' | cut -f 5 | sort -n |\
     gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
     jq -c --slurp --raw-input --arg stat_name during_pr_code_lifetime_died_cdf -f ${DIR}/cdf2json.jq
 
 echo "live code lifetime distribution (during analysis period)" > /dev/stderr
-pv ${DATADIR}/metadata.gz | zcat |\
-    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s) |\
+pv ${ANALYSISDIR}/metadata.gz | zcat |\
     ag 'live' | cut -f 5 | sort -n |\
     gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
     jq -c --slurp --raw-input --arg stat_name during_pr_code_lifetime_live_cdf -f ${DIR}/cdf2json.jq
@@ -164,7 +176,7 @@ cat\
     <(cat ${ANALYSISDIR}/reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
     <(cat ${ANALYSISDIR}/unreviewed_commits | cut -f1 | gawk '{printf("%s\tunreviewed\n", $1)}') |\
     LC_ALL=C sort |\
-    LC_ALL=C join <(zcat ${DATADIR}/metadata.gz | cut -f 2,4 | LC_ALL=C sort) - |\
+    LC_ALL=C join <(zcat ${ANALYSISDIR}/metadata.gz | cut -f 2,4 | LC_ALL=C sort) - |\
     LC_ALL=C sort | uniq -c |\
     gawk '{printf("%s-%s\t%d\n",$4,$3,$1)}' |\
     gawk -M -f ${DIR}/groupstats.awk |\
@@ -188,7 +200,7 @@ cat\
     <(cat ${ANALYSISDIR}/unreviewed_commits |\
         gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
     LC_ALL=C sort |\
-    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+    LC_ALL=C join -t$'\t' - <(zcat ${ANALYSISDIR}/metadata.gz | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime -f ${DIR}/gs2json.jq
 
@@ -198,7 +210,7 @@ cat\
     <(cat ${ANALYSISDIR}/unreviewed_commits |\
         gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
     LC_ALL=C sort |\
-    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | ag 'died' | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+    LC_ALL=C join -t$'\t' - <(zcat ${ANALYSISDIR}/metadata.gz | ag 'died' | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime_died -f ${DIR}/gs2json.jq
 
@@ -208,7 +220,7 @@ cat\
     <(cat ${ANALYSISDIR}/unreviewed_commits |\
         gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
     LC_ALL=C sort |\
-    LC_ALL=C join -t$'\t' - <(zcat ${DATADIR}/metadata.gz | ag 'live' | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+    LC_ALL=C join -t$'\t' - <(zcat ${ANALYSISDIR}/metadata.gz | ag 'live' | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime_live -f ${DIR}/gs2json.jq
 
