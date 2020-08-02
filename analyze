@@ -26,6 +26,8 @@ fi
 
 ANALYSISDIR=${DATADIR}/analysis
 
+REPO=$(cat ${DATADIR}/repo | jq -r '.full_name')
+
 rm -rf ${ANALYSISDIR}
 mkdir ${ANALYSISDIR}
 
@@ -33,12 +35,23 @@ mkdir ${ANALYSISDIR}
 echo "preparing analysis data..." > /dev/stderr
 
 #gather PR status
+#limit by EARLIEST_PR (using closed date, or created date if we have to)
+#also drop pulls that are FROM the default branch on the main repo
+#   we'll assume prs from other branches are bound for mainline eventually
 echo "prepping pr statuses..." > /dev/stderr
 pv ${DATADIR}/pulls.gz | zcat |\
-    jq -r '.[] | [.number, if .merged_at != null then "merged" else .state end, .created_at, .closed_at, .merge_commit_sha] | @tsv' |\
-    gawk -F\\t '$3 >= "'${EARLIEST_PR}'"' |\
+    jq -r --arg default_branch $DEFAULT_BRANCH --arg full_name $REPO '.[] | select(.head.ref != $default_branch or .head.repo.full_name != $full_name) | [.number, if .merged_at != null then "merged" else .state end, .created_at, .closed_at, .merge_commit_sha] | @tsv' |\
+    gawk -F\\t '($4!="" && $4 >= "'${EARLIEST_PR}'") || $3 >= "'${EARLIEST_PR}'"' |\
     LC_ALL=C sort \
     > ${ANALYSISDIR}/pr_status
+
+echo "preparing commit pulls..." > /dev/stderr
+
+#drop commit pulls FROM default branch, as above
+cat ${DATADIR}/commit_pulls |\
+    jq -r -R -c  --arg default_branch $DEFAULT_BRANCH --arg full_name $REPO 'split("\t") | (.[1] | fromjson | [.[] | select(.head.ref != $default_branch or .head.repo.full_name != $full_name)])' |\
+    paste <(cat ${DATADIR}/commit_pulls | cut -f1) -\
+    > ${ANALYSISDIR}/commit_pulls
 
 echo "preparing a sample of reviewed and unreviewed commits..." > /dev/stderr
 
@@ -50,7 +63,7 @@ cat ${DATADIR}/commit_messages |\
     gawk 'BEGIN {OFS="\t"} /^__commit__ [a-f0-9]{40}$/ {commit=$2} !/^__commit__ [a-f0-9]{40}$/ {print commit, $0}' |\
     gawk -F\\t 'BEGIN {OFS="\t"} {if(match($2, /(Merge pull request #([0-9]+))|(\(#([0-9]+)\)$)/, m) > 0) { if(m[2] == "") { print m[4], $1} else { print m[2], $1}}}' |\
     LC_ALL=C sort | LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/pr_status |\
-    gawk -F\\t 'BEGIN {OFS="\t"} {print $2, $1}' | LC_ALL=C sort -u\
+    gawk -F\\t 'BEGIN {OFS="\t"} {print $2, $1, "commit_message"}' | LC_ALL=C sort -u\
     >> ${ANALYSISDIR}/reviewed_commits.tmp
 
 #commits from external merge tools
@@ -58,15 +71,15 @@ cat ${DATADIR}/commit_autolinks |\
     (ag 'closes' || true) |\
     gawk -F\\t 'BEGIN {OFS="\t"} {print $2,$1}' |\
     LC_ALL=C sort | LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/pr_status |\
-    gawk -F\\t 'BEGIN {OFS="\t"} {print $2,$1}' | LC_ALL=C sort -u\
+    gawk -F\\t 'BEGIN {OFS="\t"} {print $2,$1, "autolink"}' | LC_ALL=C sort -u\
     >> ${ANALYSISDIR}/reviewed_commits.tmp
 
 #commits listed in merge_commit_sha for merged PRs
 cat ${ANALYSISDIR}/pr_status |\
     (ag 'merged' || true) |\
-    gawk -F\\t 'BEGIN {OFS="\t"} {print $5,$1}' |\
+    gawk -F\\t 'BEGIN {OFS="\t"} {print $5,$1,"merge_commit"}' |\
     LC_ALL=C sort | LC_ALL=C join -t$'\t' - ${DATADIR}/commitdates |\
-    cut -f 1,2\
+    cut -f 1,2,3\
     >> ${ANALYSISDIR}/reviewed_commits.tmp
 
 #cascade review to commits with same committer and commit time
@@ -75,11 +88,11 @@ zcat ${DATADIR}/commit_graph.gz |\
     LC_ALL=C sort |\
     join -t$'\t' -a2 -o0,1.2,2.3,2.4,2.5,2.7 <(cat ${ANALYSISDIR}/reviewed_commits.tmp | LC_ALL=C sort) - |\
     sort -t$'\t' -k4r,4r -k3,3 -k6n,6n |\
-    gawk -F\\t '$2 == "" && $3 == last_ce && $4 == last_ct && last_pr != "" {printf("%s\t%s\n", $1, last_pr)} $2 == "" && $3 != last_cs || $4 != last_ct { last_pr = "" } $2 != "" {printf("%s\t%s\n", $1, $2)} $2!="" && ($3 != last_cs || $4 != last_ct) { last_pr=$2;last_ce=$3;last_ct=$4}' |\
+    gawk -F\\t -f ${DIR}/cascade_review.awk |\
     LC_ALL=C sort -u\
     > ${ANALYSISDIR}/reviewed_commits
 
-rm ${ANALYSISDIR}/reviewed_commits.tmp
+#rm ${ANALYSISDIR}/reviewed_commits.tmp
 
 
 #the complement, but during the right period
@@ -98,7 +111,7 @@ AVG_COMMENT_TIME=$(\
 
 echo "filtering LOC metadata..." > /dev/stderr
 pv ${DATADIR}/metadata.gz | zcat |\
-    gawk -F\\t '$7 >='$(date -d ${EARLIEST_PR} +%s) |\
+    gawk -F\\t '$7 >='$(date -d "${EARLIEST_PR}" +%s) |\
     gzip -c\
     > ${ANALYSISDIR}/metadata.gz
 
@@ -250,7 +263,7 @@ printf "%d\t%d\t%d\t%d\n"\
     jq -c --slurp --raw-input 'split("\t") | {"stat":"gh_merges_during_prs", "data":{"commits":(.[0]|tonumber), "gh_merges":(.[1]|tonumber), "gh_likely_merge":(.[2]|tonumber), "likely_external_merge":(.[3]|tonumber)}}'
 
 echo "comparing GH commit pull association with commit message analysis" > /dev/stderr
-cat ${DATADIR}/commit_pulls |\
+cat ${ANALYSISDIR}/commit_pulls |\
     sed -E 's/^https:\/\/api.github.com\/repos\/[^\/]*\/[^\/]*\/commits\/([a-f0-9]{40})\/pulls/\1/' |\
     LC_ALL=C sort | LC_ALL=C join -t$'\t' - <(cat ${ANALYSISDIR}/reviewed_commits ${ANALYSISDIR}/unreviewed_commits | LC_ALL=C sort) |\
     jq -r -R 'split("\t") | [.[0], (.[1] | fromjson | length), .[2]] | @tsv' |\
@@ -258,7 +271,7 @@ cat ${DATADIR}/commit_pulls |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name gh_rev_vs_commit_rev -f ${DIR}/gs2json.jq
 
-cat ${DATADIR}/commit_pulls |\
+cat ${ANALYSISDIR}/commit_pulls |\
     sed -E 's/^https:\/\/api.github.com\/repos\/[^\/]*\/[^\/]*\/commits\/([a-f0-9]{40})\/pulls/\1/' |\
     LC_ALL=C sort | LC_ALL=C join -t$'\t' - <(cat ${ANALYSISDIR}/reviewed_commits ${ANALYSISDIR}/unreviewed_commits | LC_ALL=C sort) |\
     jq -r -R 'split("\t") | [.[0], (.[2] as $prnumber | .[1] | fromjson | map(.number) | select(($prnumber // "0" | tonumber))|length), .[2]] | @tsv' |\

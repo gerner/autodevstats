@@ -20,11 +20,14 @@ COMMIT_PR_SAMPLESIZE=200
 
 #an outer bound for how many pages of PRs we'll try to fetch
 #TODO: we'll need to expand this to more reliably capture 1 year of history
+#this is enough to hopefully capture ~1 year of PRs even for very active repos
+#the vast majority (>95%) of OSS benchmark repos are captured by just 20 pages
 MAX_ALL_PR_PAGES=60
 #an outer bound for how much data we'll pull from github, 3 years
 MAX_SPAN_DAYS=730
 #we'll run sets of time-bound analyses:
-SPAN_DAYS="183 365 730 1460"
+#SPAN_DAYS="183 365 730 1460"
+SPAN_DAYS=365
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
@@ -184,22 +187,36 @@ if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] ; then
     LATEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .updated_at' | sort | tail -n1)
     LATEST_COMMIT=$(date -d@$(cat ${DATADIR}/commitdates | cut -f 2 | sort -n | tail -n1) --utc +%Y-%m-%dT%H:%M:%SZ)
 
-    LATEST_DATE=$(printf "%s\n%s\n" "${LATEST_PR}" "${LATEST_COMMIT}" | gawk '$1 > max_date { max_date = $1 } END {print max_date}')
+    #tried using the latest of commit and PR, but commit makes more sense
+    #for some inactive repos PRs might still get comments long after the last commit
+    #LATEST_DATE=$(printf "%s\n%s\n" "${LATEST_PR}" "${LATEST_COMMIT}" | gawk '$1 > max_date { max_date = $1 } END {print max_date}')
+    LATEST_DATE=$LATEST_COMMIT
     MAX_SPAN_DATE=$(date -d@$(( $(date -d "$LATEST_DATE" +%s) - $(( $MAX_SPAN_DAYS * 86400 )) )) --utc +%Y-%m-%dT%H:%M:%SZ)
 
-    printf "EARLIEST_PR\t%s" $EARLIEST_PR >> ${DATADIR}/times.tsv
-    printf "LATEST_PR\t%s" $LATEST_PR >> ${DATADIR}/times.tsv
-    printf "LATEST_COMMIT\t%s" $LATEST_COMMIT >> ${DATADIR}/times.tsv
-    printf "MAX_SPAN_DATE\t%s" $MAX_SPAN_DATE >> ${DATADIR}/times.tsv
+    printf "EARLIEST_PR\t%d\n" $(date -d $EARLIEST_PR +%s) >> ${DATADIR}/times.tsv
+    printf "LATEST_PR\t%d\n" $(date -d $LATEST_PR +%s) >> ${DATADIR}/times.tsv
+    printf "LATEST_COMMIT\t%d\n" $(date -d $LATEST_COMMIT +%s) >> ${DATADIR}/times.tsv
+    printf "MAX_SPAN_DATE\t%d\n" $(date -d $MAX_SPAN_DATE +%s) >> ${DATADIR}/times.tsv
 
     #limit to max span of analysis
-    if [[ "$EARLIEST_PR" < "$MAX_SPAN_DATE" ]]; then
-        EARLIEST_PR=$MAX_SPAN_DATE
+    EARLIEST_DATE=$EARLIEST_PR
+    if [[ "$EARLIEST_DATE" < "$MAX_SPAN_DATE" ]]; then
+        EARLIEST_DATE=$MAX_SPAN_DATE
     fi
 
-    echo 'https://api.github.com/repos/'${REPO}'/pulls/comments?since='${EARLIEST_PR}'&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/pull-comments.gz
-    echo 'https://api.github.com/repos/'${REPO}'/issues/comments?since='${EARLIEST_PR}'&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/issue-comments.gz
-    echo 'https://api.github.com/repos/'${REPO}'/issues?since='${EARLIEST_PR}'&state=all&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/issues.gz
+    echo 'https://api.github.com/repos/'${REPO}'/pulls/comments?since='${EARLIEST_DATE}'&sort=created&order=desc&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/pull-comments.gz
+    #TODO: issue comments might be limited to just 400 pages, need to make sure we get the issue comments for the relevant PRs
+    echo 'https://api.github.com/repos/'${REPO}'/issues/comments?since='${EARLIEST_DATE}'&sort=created&order=desc&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/issue-comments.gz
+    #if [ $(zcat ${DATADIR}/issue-comments.gz | zcat | wc -l) -eq 400 ]; then
+        #TODO: what to do if we get cut off on comments?
+        #A. replace with pull-by-pull and live with not having non-PR comments
+        #B. repeatedly recompute latest date and ask for more since then
+        #C. compute diff on PRs and fetch missing (maybe handle the edge case?)
+        #D. ignore it? maybe measure how often this happens?
+    #fi
+    #zcat ${DATADIR}/pulls.gz | jq -r '.[] | .comments_url' | sed 's/$/?per_page=100/' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" SILENT=true ${DIR}/fetch-comments.sh | pv -l -s $(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .comments_url' | wc -l) | gzip -c > ${DATADIR}/issue-comments.gz
+    echo 'https://api.github.com/repos/'${REPO}'/issues?since='${EARLIEST_DATE}'&state=all&sort=created&order=desc&per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/issues.gz
+    #zcat ${DATADIR}/pulls.gz | jq -r '.[] | .issue_url' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" SILENT=true ${DIR}/fetch-comments.sh | pv -l -s $(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .issue_url' | wc -l) | gzip -c > ${DATADIR}/issue.gz
 
     #TODO: we don't use this data anywhere, maybe don't fetch it?
     #echo 'https://api.github.com/repos/'${REPO}'/comments?per_page=100' | GITHUB_TOKEN=$GITHUB_TOKEN ALLCOMMENTS="" ${DIR}/fetch-comments.sh | gzip -c > ${DATADIR}/commit-comments.gz
@@ -212,7 +229,7 @@ if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] ; then
     echo "checking with GitHub how a sample of commits relate to pulls..."
     starttime=$(date +%s)
     cat ${DATADIR}/commitdates |\
-        gawk -vrepo=${REPO} -vearliest=$(date -d "${EARLIEST_PR}" +%s) -F\\t '$2>=earliest {printf("https://api.github.com/repos/%s/commits/%s/pulls\n", repo, $1)}' |\
+        gawk -vrepo=${REPO} -vearliest=$(date -d "${EARLIEST_DATE}" +%s) -F\\t '$2>=earliest {printf("https://api.github.com/repos/%s/commits/%s/pulls\n", repo, $1)}' |\
         sort -R | tail -n${COMMIT_PR_SAMPLESIZE} |\
         GITHUB_TOKEN=$GITHUB_TOKEN HEADER_ACCEPT="application/vnd.github.groot-preview+json" PREFIX_URL=true SILENT=true ${DIR}/fetch-comments.sh | pv -l -s200 \
         > ${DATADIR}/commit_pulls
@@ -261,12 +278,20 @@ elif [ -d "${DATADIR}" ]; then
     LATEST_PR=$(zcat ${DATADIR}/pulls.gz | jq -r '.[] | .updated_at' | sort | tail -n1)
     LATEST_COMMIT=$(date -d@$(cat ${DATADIR}/commitdates | cut -f 2 | sort -n | tail -n1) --utc +%Y-%m-%dT%H:%M:%SZ)
 
-    LATEST_DATE=$(printf "%s\n%s\n" "${LATEST_PR}" "${LATEST_COMMIT}" | gawk '$1 > max_date { max_date = $1 } END {print max_date}')
+    #tried using the latest of commit and PR, but commit makes more sense
+    #for some inactive repos PRs might still get comments long after the last commit
+    #LATEST_DATE=$(printf "%s\n%s\n" "${LATEST_PR}" "${LATEST_COMMIT}" | gawk '$1 > max_date { max_date = $1 } END {print max_date}')
+    LATEST_DATE=$LATEST_COMMIT
     MAX_SPAN_DATE=$(date -d@$(( $(date -d "$LATEST_DATE" +%s) - $(( $MAX_SPAN_DAYS * 86400 )) )) --utc +%Y-%m-%dT%H:%M:%SZ)
 
     #limit to max span of analysis
-    if [[ "$EARLIEST_PR" < "$MAX_SPAN_DATE" ]]; then
-        EARLIEST_PR=$MAX_SPAN_DATE
+    EARLIEST_DATE=$EARLIEST_PR
+    if [[ "$EARLIEST_DATE" < "$MAX_SPAN_DATE" ]]; then
+        EARLIEST_DATE=$MAX_SPAN_DATE
+    fi
+
+    if [ -z "$DEFAULT_BRANCH" ]; then
+        DEFAULT_BRANCH=$(cat ${DATADIR}/repo | jq -r '.default_branch')
     fi
 else
     echo "${DATADIR} exists but isn't a directory, run without that param and we'll create a directory to hold data"
@@ -414,7 +439,7 @@ printf "%d\t%d\t%d\t%d\n"\
 
 echo "PR merge commits during analysis period"
 printf "%d\t%d\t%d\t%d\n"\
-    $(cat ${DATADIR}/commit_messages | ag '__commit__ [a-f0-9]{40}' | gawk '{print $2}' | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/commitdates | gawk '$2 >= '$(date -d ${EARLIEST_PR} +%s) | wc -l)\
+    $(cat ${DATADIR}/commit_messages | ag '__commit__ [a-f0-9]{40}' | gawk '{print $2}' | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/commitdates | gawk '$2 >= '$(date -d ${EARLIEST_DATE} +%s) | wc -l)\
     $(cat ${DATADIR}/commit_messages | (grep -E -o 'Merge pull request #[0-9]+ from' || true) | grep -o '[0-9]*' | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/pr_status | wc -l)\
     $(cat ${DATADIR}/commit_messages | (grep -E -A1 '^__commit__ [a-f0-9]{40}$' || true) | (grep -E -o ' \(#[0-9]+\)$' || true) | grep -o '[0-9]*' | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/pr_status | wc -l)\
     $(cat ${DATADIR}/commit_autolinks | grep 'close' | cut -f 2 | LC_ALL=C sort | LC_ALL=C join - ${DATADIR}/pr_status | wc -l) |\
@@ -683,7 +708,7 @@ rm ${DATADIR}/reviewed_commits.tmp
 
 #the complement, but during the right period
 zcat ${DATADIR}/commit_graph.gz |\
-    gawk -F\\t '$4 >='$(date -d ${EARLIEST_PR} +%s) | cut -f1 |\
+    gawk -F\\t '$4 >='$(date -d ${EARLIEST_DATE} +%s) | cut -f1 |\
     LC_ALL=C sort |\
     LC_ALL=C join -v1 - ${DATADIR}/reviewed_commits \
     > ${DATADIR}/unreviewed_commits
@@ -886,7 +911,10 @@ echo
 
 for span in $SPAN_DAYS; do
     SPAN_DATE=$(date -d@$(( $(date -d "$LATEST_DATE" +%s) - $(( $span * 86400 )) )) --utc +%Y-%m-%dT%H:%M:%SZ)
-    SPAN_DAYS=$span EARLIEST_PR=$SPAN_DATE DATADIR=$DATADIR ${DIR}/analyze |\
+    if [[ "$SPAN_DATE" < "$EARLIEST_PR" ]]; then
+        SPAN_DATE=$EARLIEST_PR
+    fi
+    SPAN_DAYS=$span EARLIEST_PR=$SPAN_DATE DATADIR=$DATADIR DEFAULT_BRANCH=${DEFAULT_BRANCH} ${DIR}/analyze |\
         jq -c --slurp '{"stat": "analysis_days_'${span}'", "data": . }'\
         >> ${DATADIR}/stats.json
 done
