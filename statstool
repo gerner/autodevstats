@@ -26,8 +26,8 @@ MAX_ALL_PR_PAGES=60
 #an outer bound for how much data we'll pull from github, 3 years
 MAX_SPAN_DAYS=730
 #we'll run sets of time-bound analyses:
-#SPAN_DAYS="183 365 730 1460"
-SPAN_DAYS=365
+SPAN_DAYS="183 365 730 1460"
+#SPAN_DAYS=365
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
