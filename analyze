@@ -203,6 +203,8 @@ function file_overlap() {
 }
 
 file_overlap "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_file_overlap"
+file_overlap "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_file_overlap"
+file_overlap "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_file_overlap"
 
 echo "overlap in files for reviewed vs unreviewed commits (total commits normalized)" > /dev/stderr
 function file_overlap_by_commits() {
@@ -222,6 +224,8 @@ function file_overlap_by_commits() {
 }
 
 file_overlap_by_commits "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_file_overlap_by_commits"
+file_overlap_by_commits "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_file_overlap_by_commits"
+file_overlap_by_commits "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_file_overlap_by_commits"
 
 echo "lines of code for reviewed vs unreviewed commits by outcome" > /dev/stderr
 function commit_review_size_by_outcome() {
@@ -241,6 +245,8 @@ function commit_review_size_by_outcome() {
 }
 
 commit_review_size_by_outcome "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_size_by_outcome"
+commit_review_size_by_outcome "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_size_by_outcome"
+commit_review_size_by_outcome "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_size_by_outcome"
 
 echo "dates for reviewed vs unreviewed commits" > /dev/stderr
 function commit_review_vs_date {
@@ -260,6 +266,8 @@ function commit_review_vs_date {
 }
 
 commit_review_size_by_outcome "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_vs_date"
+commit_review_size_by_outcome "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_vs_date"
+commit_review_size_by_outcome "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_vs_date"
 
 echo "lifetime for code from reviewed vs unreviewed commits" > /dev/stderr
 function commit_review_vs_lifetime() {
@@ -279,6 +287,8 @@ function commit_review_vs_lifetime() {
 }
 
 commit_review_vs_lifetime "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_vs_lifetime"
+commit_review_vs_lifetime "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_vs_lifetime"
+commit_review_vs_lifetime "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_vs_lifetime"
 
 function commit_review_vs_lifetime_died() {
     local unreviewed_commits=$1
@@ -297,6 +307,8 @@ function commit_review_vs_lifetime_died() {
 }
 
 commit_review_vs_lifetime_died "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_vs_lifetime_died"
+commit_review_vs_lifetime_died "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_vs_lifetime_died"
+commit_review_vs_lifetime_died "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_vs_lifetime_died"
 
 function commit_review_vs_lifetime_live() {
     local unreviewed_commits=$1
@@ -315,6 +327,8 @@ function commit_review_vs_lifetime_live() {
 }
 
 commit_review_vs_lifetime_live "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_vs_lifetime_live"
+commit_review_vs_lifetime_live "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_vs_lifetime_live"
+commit_review_vs_lifetime_live "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_vs_lifetime_live"
 
 echo "commit distribution across authors (during analysis period)" > /dev/stderr
 function during_pr_commits_proportion_by_dev_cdf() {
@@ -331,6 +345,8 @@ function during_pr_commits_proportion_by_dev_cdf() {
 }
 
 during_pr_commits_proportion_by_dev_cdf "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "during_pr_commits_proportion_by_dev_cdf"
+during_pr_commits_proportion_by_dev_cdf "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_during_pr_commits_proportion_by_dev_cdf"
+during_pr_commits_proportion_by_dev_cdf "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_during_pr_commits_proportion_by_dev_cdf"
 
 
 echo "commit distribution across authors (reviewed)" > /dev/stderr
@@ -348,6 +364,8 @@ function rev_commits_proportion_by_dev_cdf() {
 }
 
 rev_commits_proportion_by_dev_cdf "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "rev_commits_proportion_by_dev_cdf"
+rev_commits_proportion_by_dev_cdf "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_rev_commits_proportion_by_dev_cdf"
+rev_commits_proportion_by_dev_cdf "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_rev_commits_proportion_by_dev_cdf"
 
 
 echo "commit distribution across authors (unreviewed)" > /dev/stderr
@@ -365,6 +383,8 @@ function unrev_commits_proportion_by_dev_cdf() {
 }
 
 unrev_commits_proportion_by_dev_cdf "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "unrev_commits_proportion_by_dev_cdf"
+unrev_commits_proportion_by_dev_cdf "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_unrev_commits_proportion_by_dev_cdf"
+unrev_commits_proportion_by_dev_cdf "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_unrev_commits_proportion_by_dev_cdf"
 
 
 echo "devs per PR" > /dev/stderr
