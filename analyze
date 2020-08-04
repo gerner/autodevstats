@@ -94,7 +94,6 @@ zcat ${DATADIR}/commit_graph.gz |\
 
 #rm ${ANALYSISDIR}/reviewed_commits.tmp
 
-
 #the complement, but during the right period
 zcat ${DATADIR}/commit_graph.gz |\
     gawk -F\\t '$4 >='$(date -d ${EARLIEST_PR} +%s) | cut -f1 |\
@@ -102,6 +101,29 @@ zcat ${DATADIR}/commit_graph.gz |\
     LC_ALL=C join -v1 - ${ANALYSISDIR}/reviewed_commits \
     > ${ANALYSISDIR}/unreviewed_commits
 
+
+#partition reviewed commits into zero-comment reviews and non-zero-comment reviews
+echo "partitioning reviewed commits by zero-comment reviews" > /dev/stderr
+cat ${ANALYSISDIR}/reviewed_commits |\
+    LC_ALL=C sort -k2,2 |\
+    LC_ALL=C join -t$'\t' -1 2 -2 1 - <(cat ${DATADIR}/commentcounts | ag 'allcommentswzero' | LC_ALL=C sort) |\
+    gawk -F\\t '$4 > 0 {printf("%s\t\n", $2)}' |\
+    LC_ALL=C sort \
+    > ${ANALYSISDIR}/reviewed_commits.nzc
+
+cat ${ANALYSISDIR}/reviewed_commits |\
+    LC_ALL=C sort -k2,2 |\
+    LC_ALL=C join -t$'\t' -1 2 -2 1 - <(cat ${DATADIR}/commentcounts | ag 'allcommentswzero' | LC_ALL=C sort) |\
+    gawk -F\\t '$4 == 0 {printf("%s\n", $2)}' |\
+    LC_ALL=C sort \
+    > ${ANALYSISDIR}/reviewed_commits.zc
+
+cat ${ANALYSISDIR}/reviewed_commits.zc ${ANALYSISDIR}/unreviewed_commits |\
+    LC_ALL=C sort \
+    > ${ANALYSISDIR}/unreviewed_commits.zc
+
+
+echo "computing average comment time..." > /dev/stderr
 AVG_COMMENT_TIME=$(\
     cat ${DATADIR}/pr_comments_data |\
     gawk -F\\t '$6 >= "'${EARLIEST_PR}'"' |\
@@ -114,6 +136,7 @@ pv ${DATADIR}/metadata.gz | zcat |\
     gawk -F\\t '$7 >='$(date -d "${EARLIEST_PR}" +%s) |\
     gzip -c\
     > ${ANALYSISDIR}/metadata.gz
+
 
 #start computing stats
 echo "doing analysis..." > /dev/stderr
@@ -332,4 +355,4 @@ cat ${DATADIR}/pr_comments_data |\
     jq -c --slurp --raw-input --arg stat_name pr_time_per_pr_wzero -f ${DIR}/gs2json.jq
 
 echo "done with analysis for $SPAN_DAYS days back to ${EARLIEST_PR}" > /dev/stderr
-echo
+echo > /dev/stderr
