@@ -237,6 +237,30 @@ cat\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime_live -f ${DIR}/gs2json.jq
 
+echo "commit distribution across authors (during analysis period)" > /dev/stderr
+cat ${DATADIR}/commits_with_author |\
+    LC_ALL=C join -t$'\t' - <(cat ${ANALYSISDIR}/reviewed_commits ${ANALYSISDIR}/unreviewed_commits | LC_ALL=C sort) |\
+    gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
+    gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
+    gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
+    jq --slurp --raw-input --arg stat_name during_pr_commits_proportion_by_dev_cdf -f ${DIR}/cdf2json.jq
+
+echo "commit distribution across authors (reviewed)" > /dev/stderr
+cat ${DATADIR}/commits_with_author |\
+    LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/reviewed_commits |\
+    gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
+    gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
+    gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
+    jq --slurp --raw-input --arg stat_name rev_commits_proportion_by_dev_cdf -f ${DIR}/cdf2json.jq
+
+echo "commit distribution across authors (unreviewed)" > /dev/stderr
+cat ${DATADIR}/commits_with_author |\
+    LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/unreviewed_commits |\
+    gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
+    gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
+    gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
+    jq --slurp --raw-input --arg stat_name unrev_commits_proportion_by_dev_cdf -f ${DIR}/cdf2json.jq
+
 echo "devs per PR" > /dev/stderr
 cat ${DATADIR}/pr_comments_data | cut -f 1,2,4 | sort -u |\
     gawk -F\\t 'BEGIN {OFS="\t"} { print $0; print $1,$2,"any"}' |\
@@ -245,14 +269,6 @@ cat ${DATADIR}/pr_comments_data | cut -f 1,2,4 | sort -u |\
     LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/pr_status | gawk -F\\t '{printf("%s-%s\t%d\n", $4,$2,$3)}' |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name dev_per_pr -f ${DIR}/gs2json.jq
-
-echo "commit distribution across authors (during analysis period)" > /dev/stderr
-cat ${DATADIR}/commits_with_author |\
-    LC_ALL=C join -t$'\t' - <(cat ${ANALYSISDIR}/reviewed_commits ${ANALYSISDIR}/unreviewed_commits | LC_ALL=C sort) |\
-    gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
-    gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
-    gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
-    jq --slurp --raw-input --arg stat_name during_pr_commits_proportion_by_dev_cdf -f ${DIR}/cdf2json.jq
 
 echo "PR merge commits during analysis period" > /dev/stderr
 printf "%d\t%d\t%d\t%d\n"\
@@ -314,22 +330,6 @@ cat ${DATADIR}/pr_comments_data |\
     gawk -F\\t -i ${DIR}/reduce.awk 'BEGIN {OFS="\t";setkey("1");} function startrun(key) {estimate=0;flr=0;state=$7} function reduce(key) {estimate+=$5;flr+=$6} function endrun(key) { printf("%s-estimate\t%f\n", state, estimate);printf("%s-floorwzero\t%f\n", state, flr);}' |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name pr_time_per_pr_wzero -f ${DIR}/gs2json.jq
-
-echo "commit distribution across authors (reviewed)" > /dev/stderr
-cat ${DATADIR}/commits_with_author |\
-    LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/reviewed_commits |\
-    gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
-    gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
-    gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
-    jq --slurp --raw-input --arg stat_name rev_commits_proportion_by_dev_cdf -f ${DIR}/cdf2json.jq
-
-echo "commit distribution across authors (unreviewed)" > /dev/stderr
-cat ${DATADIR}/commits_with_author |\
-    LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/unreviewed_commits |\
-    gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
-    gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
-    gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
-    jq --slurp --raw-input --arg stat_name unrev_commits_proportion_by_dev_cdf -f ${DIR}/cdf2json.jq
 
 echo "done with analysis for $SPAN_DAYS days back to ${EARLIEST_PR}" > /dev/stderr
 echo
