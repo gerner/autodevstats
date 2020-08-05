@@ -193,7 +193,7 @@ function file_overlap() {
 
     cat\
         <(cat $unreviewed_commits | gawk -v commits=$(cat $unreviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "unreviewed", 1.0/commits)}')\
-        <(cat $reviewed_commits | gawk -v commits=$(cat $/reviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "reviewed", 1.0/commits)}') |\
+        <(cat $reviewed_commits | gawk -v commits=$(cat $reviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "reviewed", 1.0/commits)}') |\
         LC_ALL=C sort | LC_ALL=C join -t$'\t' -\
             <(cat ${DATADIR}/filestatus | cut -f 1,4 | LC_ALL=C sort) |\
         gawk 'BEGIN {OFS="\t"} {print $4,$2,$3}' |\
@@ -265,9 +265,9 @@ function commit_review_vs_date {
         jq -c --slurp --raw-input --arg stat_name $stat_name -f ${DIR}/gs2json.jq
 }
 
-commit_review_size_by_outcome "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_vs_date"
-commit_review_size_by_outcome "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_vs_date"
-commit_review_size_by_outcome "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_vs_date"
+commit_review_vs_date "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_vs_date"
+commit_review_vs_date "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_vs_date"
+commit_review_vs_date "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_vs_date"
 
 echo "lifetime for code from reviewed vs unreviewed commits" > /dev/stderr
 function commit_review_vs_lifetime() {
