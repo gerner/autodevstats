@@ -426,6 +426,13 @@ cat ${DATADIR}/commentcounts | LC_ALL=C sort | join -t$'\t' ${ANALYSISDIR}/pr_st
     gawk -F\\t -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name pr_comment_summary -f ${DIR}/gs2json.jq
 
+echo "PR comment distribution" > /dev/stderr
+LC_ALL=C join -t $'\t' -o 0,1.2,1.3 ${DATADIR}/commentcounts ${ANALYSISDIR}/pr_status  |\
+    ag 'allcommentswzero' | cut -f 3 | sort -n |\
+    gawk -f ~/src/autodev-funicular/src/statstool/cdf.awk <(echo "0_1_2_3_4_5_7_10_15_20_30_50_75_100" | tr '_' '\n') - |\
+    jq -c --slurp --raw-input --arg stat_name pr_comment_cdf -f ${DIR}/cdf2json.jq
+
+
 echo "PR lifetime summary" > /dev/stderr
 cat ${ANALYSISDIR}/pr_status | gawk -F\\t -i ${DIR}/date.awk 'BEGIN {OFS="\t"} $2=="open" {print $2, systime() - parsedate($3)} $2!="open" { print $2, parsedate($4) - parsedate($3)}' |\
     gawk -M -f ${DIR}/groupstats.awk |\
