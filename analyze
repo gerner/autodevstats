@@ -89,7 +89,7 @@ zcat ${DATADIR}/commit_graph.gz |\
     join -t$'\t' -a2 -o0,1.2,2.3,2.4,2.5,2.7 <(cat ${ANALYSISDIR}/reviewed_commits.tmp | LC_ALL=C sort) - |\
     sort -t$'\t' -k4r,4r -k3,3 -k6n,6n |\
     gawk -F\\t -f ${DIR}/cascade_review.awk |\
-    LC_ALL=C sort -u\
+    LC_ALL=C sort -u -k1,1 \
     > ${ANALYSISDIR}/reviewed_commits
 
 #rm ${ANALYSISDIR}/reviewed_commits.tmp
@@ -108,14 +108,14 @@ cat ${ANALYSISDIR}/reviewed_commits |\
     LC_ALL=C sort -k2,2 |\
     LC_ALL=C join -t$'\t' -1 2 -2 1 - <(cat ${DATADIR}/commentcounts | ag 'allcommentswzero' | LC_ALL=C sort) |\
     gawk -F\\t '$4 > 0 {printf("%s\t\n", $2)}' |\
-    LC_ALL=C sort \
+    LC_ALL=C sort -u -k1,1 \
     > ${ANALYSISDIR}/reviewed_commits.nzc
 
 cat ${ANALYSISDIR}/reviewed_commits |\
     LC_ALL=C sort -k2,2 |\
     LC_ALL=C join -t$'\t' -1 2 -2 1 - <(cat ${DATADIR}/commentcounts | ag 'allcommentswzero' | LC_ALL=C sort) |\
     gawk -F\\t '$4 == 0 {printf("%s\n", $2)}' |\
-    LC_ALL=C sort \
+    LC_ALL=C sort -u -k1,1 \
     > ${ANALYSISDIR}/reviewed_commits.zc
 
 cat ${ANALYSISDIR}/reviewed_commits.zc ${ANALYSISDIR}/unreviewed_commits |\
