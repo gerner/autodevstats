@@ -89,11 +89,10 @@ zcat ${DATADIR}/commit_graph.gz |\
     join -t$'\t' -a2 -o0,1.2,2.3,2.4,2.5,2.7 <(cat ${ANALYSISDIR}/reviewed_commits.tmp | LC_ALL=C sort) - |\
     sort -t$'\t' -k4r,4r -k3,3 -k6n,6n |\
     gawk -F\\t -f ${DIR}/cascade_review.awk |\
-    LC_ALL=C sort -u\
+    LC_ALL=C sort -u -k1,1 \
     > ${ANALYSISDIR}/reviewed_commits
 
 #rm ${ANALYSISDIR}/reviewed_commits.tmp
-
 
 #the complement, but during the right period
 zcat ${DATADIR}/commit_graph.gz |\
@@ -102,6 +101,29 @@ zcat ${DATADIR}/commit_graph.gz |\
     LC_ALL=C join -v1 - ${ANALYSISDIR}/reviewed_commits \
     > ${ANALYSISDIR}/unreviewed_commits
 
+
+#partition reviewed commits into zero-comment reviews and non-zero-comment reviews
+echo "partitioning reviewed commits by zero-comment reviews" > /dev/stderr
+cat ${ANALYSISDIR}/reviewed_commits |\
+    LC_ALL=C sort -k2,2 |\
+    LC_ALL=C join -t$'\t' -1 2 -2 1 - <(cat ${DATADIR}/commentcounts | ag 'allcommentswzero' | LC_ALL=C sort) |\
+    gawk -F\\t '$4 > 0 {printf("%s\t\n", $2)}' |\
+    LC_ALL=C sort -u -k1,1 \
+    > ${ANALYSISDIR}/reviewed_commits.nzc
+
+cat ${ANALYSISDIR}/reviewed_commits |\
+    LC_ALL=C sort -k2,2 |\
+    LC_ALL=C join -t$'\t' -1 2 -2 1 - <(cat ${DATADIR}/commentcounts | ag 'allcommentswzero' | LC_ALL=C sort) |\
+    gawk -F\\t '$4 == 0 {printf("%s\n", $2)}' |\
+    LC_ALL=C sort -u -k1,1 \
+    > ${ANALYSISDIR}/reviewed_commits.zc
+
+cat ${ANALYSISDIR}/reviewed_commits.zc ${ANALYSISDIR}/unreviewed_commits |\
+    LC_ALL=C sort \
+    > ${ANALYSISDIR}/unreviewed_commits.zc
+
+
+echo "computing average comment time..." > /dev/stderr
 AVG_COMMENT_TIME=$(\
     cat ${DATADIR}/pr_comments_data |\
     gawk -F\\t '$6 >= "'${EARLIEST_PR}'"' |\
@@ -114,6 +136,7 @@ pv ${DATADIR}/metadata.gz | zcat |\
     gawk -F\\t '$7 >='$(date -d "${EARLIEST_PR}" +%s) |\
     gzip -c\
     > ${ANALYSISDIR}/metadata.gz
+
 
 #start computing stats
 echo "doing analysis..." > /dev/stderr
@@ -163,79 +186,206 @@ cat ${DATADIR}/pr_comments_data | cut -f 1,2,4 |\
     jq -c --slurp --raw-input --arg stat_name comment_per_dev -f ${DIR}/gs2json.jq
 
 echo "overlap in files for reviewed vs unreviewed commits" > /dev/stderr
-cat\
-    <(cat ${ANALYSISDIR}/unreviewed_commits | gawk -v commits=$(cat ${ANALYSISDIR}/unreviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "unreviewed", 1.0/commits)}')\
-    <(cat ${ANALYSISDIR}/reviewed_commits | gawk -v commits=$(cat ${ANALYSISDIR}/reviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "reviewed", 1.0/commits)}') |\
-    LC_ALL=C sort | LC_ALL=C join -t$'\t' -\
-        <(cat ${DATADIR}/filestatus | cut -f 1,4 | LC_ALL=C sort) |\
-    gawk 'BEGIN {OFS="\t"} {print $4,$2,$3}' |\
-    LC_ALL=C sort |\
-    gawk -F\\t -i ${DIR}/reduce.awk -f ${DIR}/jaccard.awk |\
-    jq -c --slurp --raw-input --arg stat_name commit_review_file_overlap -f ${DIR}/gs2json.jq
+function file_overlap() {
+    local unreviewed_commits=$1
+    local reviewed_commits=$2
+    local stat_name=$3
+
+    cat\
+        <(cat $unreviewed_commits | gawk -v commits=$(cat $unreviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "unreviewed", 1.0/commits)}')\
+        <(cat $reviewed_commits | gawk -v commits=$(cat $reviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "reviewed", 1.0/commits)}') |\
+        LC_ALL=C sort | LC_ALL=C join -t$'\t' -\
+            <(cat ${DATADIR}/filestatus | cut -f 1,4 | LC_ALL=C sort) |\
+        gawk 'BEGIN {OFS="\t"} {print $4,$2,$3}' |\
+        LC_ALL=C sort |\
+        gawk -F\\t -i ${DIR}/reduce.awk -f ${DIR}/jaccard.awk |\
+        jq -c --slurp --raw-input --arg stat_name $stat_name -f ${DIR}/gs2json.jq
+}
+
+file_overlap "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_file_overlap"
+file_overlap "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_file_overlap"
+file_overlap "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_file_overlap"
 
 echo "overlap in files for reviewed vs unreviewed commits (total commits normalized)" > /dev/stderr
-cat\
-    <(cat ${ANALYSISDIR}/unreviewed_commits | gawk -v commits=$(cat ${ANALYSISDIR}/unreviewed_commits ${ANALYSISDIR}/reviewed_commits| wc -l) '{printf("%s\t%s\t%f\n", $1, "unreviewed", 1.0/commits)}')\
-    <(cat ${ANALYSISDIR}/reviewed_commits | gawk -v commits=$(cat ${ANALYSISDIR}/unreviewed_commits ${ANALYSISDIR}/reviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "reviewed", 1.0/commits)}') |\
-    LC_ALL=C sort | LC_ALL=C join -t$'\t' -\
-        <(cat ${DATADIR}/filestatus | cut -f 1,4 | LC_ALL=C sort) |\
-    gawk 'BEGIN {OFS="\t"} {print $4,$2,$3}' |\
-    LC_ALL=C sort |\
-    gawk -F\\t -i ${DIR}/reduce.awk -f ${DIR}/jaccard.awk |\
-    jq -c --slurp --raw-input --arg stat_name commit_review_file_overlap_by_commits -f ${DIR}/gs2json.jq
+function file_overlap_by_commits() {
+    local unreviewed_commits=$1
+    local reviewed_commits=$2
+    local stat_name=$3
+
+    cat\
+        <(cat $unreviewed_commits | gawk -v commits=$(cat $unreviewed_commits $reviewed_commits| wc -l) '{printf("%s\t%s\t%f\n", $1, "unreviewed", 1.0/commits)}')\
+        <(cat $reviewed_commits | gawk -v commits=$(cat $unreviewed_commits $reviewed_commits | wc -l) '{printf("%s\t%s\t%f\n", $1, "reviewed", 1.0/commits)}') |\
+        LC_ALL=C sort | LC_ALL=C join -t$'\t' -\
+            <(cat ${DATADIR}/filestatus | cut -f 1,4 | LC_ALL=C sort) |\
+        gawk 'BEGIN {OFS="\t"} {print $4,$2,$3}' |\
+        LC_ALL=C sort |\
+        gawk -F\\t -i ${DIR}/reduce.awk -f ${DIR}/jaccard.awk |\
+        jq -c --slurp --raw-input --arg stat_name $stat_name -f ${DIR}/gs2json.jq
+}
+
+file_overlap_by_commits "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_file_overlap_by_commits"
+file_overlap_by_commits "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_file_overlap_by_commits"
+file_overlap_by_commits "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_file_overlap_by_commits"
 
 echo "lines of code for reviewed vs unreviewed commits by outcome" > /dev/stderr
-cat\
-    <(cat ${ANALYSISDIR}/reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
-    <(cat ${ANALYSISDIR}/unreviewed_commits | cut -f1 | gawk '{printf("%s\tunreviewed\n", $1)}') |\
-    LC_ALL=C sort |\
-    LC_ALL=C join <(pv ${ANALYSISDIR}/metadata.gz | zcat | cut -f 2,4 | LC_ALL=C sort) - |\
-    LC_ALL=C sort | uniq -c |\
-    gawk '{printf("%s-%s\t%d\n",$4,$3,$1)}' |\
-    gawk -M -f ${DIR}/groupstats.awk |\
-    jq -c --slurp --raw-input --arg stat_name commit_review_size_by_outcome -f ${DIR}/gs2json.jq
+function commit_review_size_by_outcome() {
+    local unreviewed_commits=$1
+    local reviewed_commits=$2
+    local stat_name=$3
+
+    cat\
+        <(cat ${ANALYSISDIR}/reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
+        <(cat ${ANALYSISDIR}/unreviewed_commits | cut -f1 | gawk '{printf("%s\tunreviewed\n", $1)}') |\
+        LC_ALL=C sort |\
+        LC_ALL=C join <(pv ${ANALYSISDIR}/metadata.gz | zcat | cut -f 2,4 | LC_ALL=C sort) - |\
+        LC_ALL=C sort | uniq -c |\
+        gawk '{printf("%s-%s\t%d\n",$4,$3,$1)}' |\
+        gawk -M -f ${DIR}/groupstats.awk |\
+        jq -c --slurp --raw-input --arg stat_name $stat_name -f ${DIR}/gs2json.jq
+}
+
+commit_review_size_by_outcome "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_size_by_outcome"
+commit_review_size_by_outcome "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_size_by_outcome"
+commit_review_size_by_outcome "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_size_by_outcome"
 
 echo "dates for reviewed vs unreviewed commits" > /dev/stderr
-cat\
-    <(cat ${ANALYSISDIR}/reviewed_commits | cut -f 1 |\
-        LC_ALL=C join -t$'\t' - ${DATADIR}/commitdates |\
-        gawk -F\\t '{printf("reviewed\t%f\n", $2)}')\
-    <(cat ${ANALYSISDIR}/unreviewed_commits |\
-        LC_ALL=C join -t$'\t' - ${DATADIR}/commitdates |\
-        gawk -F\\t '{printf("unreviewed\t%f\n", $2)}') |\
-    gawk -M -f ${DIR}/groupstats.awk |\
-    jq -c --slurp --raw-input --arg stat_name commit_review_vs_date -f ${DIR}/gs2json.jq
+function commit_review_vs_date {
+    local unreviewed_commits=$1
+    local reviewed_commits=$2
+    local stat_name=$3
+
+    cat\
+        <(cat $reviewed_commits | cut -f 1 |\
+            LC_ALL=C join -t$'\t' - ${DATADIR}/commitdates |\
+            gawk -F\\t '{printf("reviewed\t%f\n", $2)}')\
+        <(cat $unreviewed_commits |\
+            LC_ALL=C join -t$'\t' - ${DATADIR}/commitdates |\
+            gawk -F\\t '{printf("unreviewed\t%f\n", $2)}') |\
+        gawk -M -f ${DIR}/groupstats.awk |\
+        jq -c --slurp --raw-input --arg stat_name $stat_name -f ${DIR}/gs2json.jq
+}
+
+commit_review_vs_date "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_vs_date"
+commit_review_vs_date "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_vs_date"
+commit_review_vs_date "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_vs_date"
 
 echo "lifetime for code from reviewed vs unreviewed commits" > /dev/stderr
-cat\
-    <(cat ${ANALYSISDIR}/reviewed_commits | cut -f 1 |\
-        gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
-    <(cat ${ANALYSISDIR}/unreviewed_commits |\
-        gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
-    LC_ALL=C sort |\
-    LC_ALL=C join -t$'\t' - <(pv ${ANALYSISDIR}/metadata.gz | zcat | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
-    gawk -M -f ${DIR}/groupstats.awk |\
-    jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime -f ${DIR}/gs2json.jq
+function commit_review_vs_lifetime() {
+    local unreviewed_commits=$1
+    local reviewed_commits=$2
+    local stat_name=$3
 
-cat\
-    <(cat ${ANALYSISDIR}/reviewed_commits | cut -f 1 |\
-        gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
-    <(cat ${ANALYSISDIR}/unreviewed_commits |\
-        gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
-    LC_ALL=C sort |\
-    LC_ALL=C join -t$'\t' - <(pv ${ANALYSISDIR}/metadata.gz | zcat | (ag 'died' || true) | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
-    gawk -M -f ${DIR}/groupstats.awk |\
-    jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime_died -f ${DIR}/gs2json.jq
+    cat\
+        <(cat $reviewed_commits | cut -f 1 |\
+            gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
+        <(cat $unreviewed_commits |\
+            gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
+        LC_ALL=C sort |\
+        LC_ALL=C join -t$'\t' - <(pv ${ANALYSISDIR}/metadata.gz | zcat | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+        gawk -M -f ${DIR}/groupstats.awk |\
+        jq -c --slurp --raw-input --arg stat_name $stat_name -f ${DIR}/gs2json.jq
+}
 
-cat\
-    <(cat ${ANALYSISDIR}/reviewed_commits | cut -f 1 |\
-        gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
-    <(cat ${ANALYSISDIR}/unreviewed_commits |\
-        gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
-    LC_ALL=C sort |\
-    LC_ALL=C join -t$'\t' - <(pv ${ANALYSISDIR}/metadata.gz | zcat | (ag 'live' || true) | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
-    gawk -M -f ${DIR}/groupstats.awk |\
-    jq -c --slurp --raw-input --arg stat_name commit_review_vs_lifetime_live -f ${DIR}/gs2json.jq
+commit_review_vs_lifetime "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_vs_lifetime"
+commit_review_vs_lifetime "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_vs_lifetime"
+commit_review_vs_lifetime "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_vs_lifetime"
+
+function commit_review_vs_lifetime_died() {
+    local unreviewed_commits=$1
+    local reviewed_commits=$2
+    local stat_name=$3
+
+    cat\
+        <(cat $reviewed_commits | cut -f 1 |\
+            gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
+        <(cat $unreviewed_commits |\
+            gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
+        LC_ALL=C sort |\
+        LC_ALL=C join -t$'\t' - <(pv ${ANALYSISDIR}/metadata.gz | zcat | (ag 'died' || true) | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+        gawk -M -f ${DIR}/groupstats.awk |\
+        jq -c --slurp --raw-input --arg stat_name $stat_name -f ${DIR}/gs2json.jq
+}
+
+commit_review_vs_lifetime_died "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_vs_lifetime_died"
+commit_review_vs_lifetime_died "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_vs_lifetime_died"
+commit_review_vs_lifetime_died "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_vs_lifetime_died"
+
+function commit_review_vs_lifetime_live() {
+    local unreviewed_commits=$1
+    local reviewed_commits=$2
+    local stat_name=$3
+
+    cat\
+        <(cat $reviewed_commits | cut -f 1 |\
+            gawk -F\\t '{printf("%s\treviewed\n", $1)}')\
+        <(cat $unreviewed_commits |\
+            gawk -F\\t '{printf("%s\tunreviewed\n", $1)}') |\
+        LC_ALL=C sort |\
+        LC_ALL=C join -t$'\t' - <(pv ${ANALYSISDIR}/metadata.gz | zcat | (ag 'live' || true) | cut -f 2,5 | LC_ALL=C sort) | cut -f 2,3 |\
+        gawk -M -f ${DIR}/groupstats.awk |\
+        jq -c --slurp --raw-input --arg stat_name $stat_name -f ${DIR}/gs2json.jq
+}
+
+commit_review_vs_lifetime_live "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "commit_review_vs_lifetime_live"
+commit_review_vs_lifetime_live "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_commit_review_vs_lifetime_live"
+commit_review_vs_lifetime_live "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_commit_review_vs_lifetime_live"
+
+echo "commit distribution across authors (during analysis period)" > /dev/stderr
+function during_pr_commits_proportion_by_dev_cdf() {
+    local unreviewed_commits=$1
+    local reviewed_commits=$2
+    local stat_name=$3
+
+    cat ${DATADIR}/commits_with_author |\
+        LC_ALL=C join -t$'\t' - <(cat $reviewed_commits $unreviewed_commits | LC_ALL=C sort) |\
+        gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
+        gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
+        gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
+        jq --slurp --raw-input --arg stat_name $stat_name -f ${DIR}/cdf2json.jq
+}
+
+during_pr_commits_proportion_by_dev_cdf "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "during_pr_commits_proportion_by_dev_cdf"
+during_pr_commits_proportion_by_dev_cdf "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_during_pr_commits_proportion_by_dev_cdf"
+during_pr_commits_proportion_by_dev_cdf "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_during_pr_commits_proportion_by_dev_cdf"
+
+
+echo "commit distribution across authors (reviewed)" > /dev/stderr
+function rev_commits_proportion_by_dev_cdf() {
+    local unreviewed_commits=$1
+    local reviewed_commits=$2
+    local stat_name=$3
+
+    cat ${DATADIR}/commits_with_author |\
+        LC_ALL=C join -t$'\t' - $reviewed_commits |\
+        gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
+        gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
+        gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
+        jq --slurp --raw-input --arg stat_name $stat_name -f ${DIR}/cdf2json.jq
+}
+
+rev_commits_proportion_by_dev_cdf "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "rev_commits_proportion_by_dev_cdf"
+rev_commits_proportion_by_dev_cdf "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_rev_commits_proportion_by_dev_cdf"
+rev_commits_proportion_by_dev_cdf "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_rev_commits_proportion_by_dev_cdf"
+
+
+echo "commit distribution across authors (unreviewed)" > /dev/stderr
+function unrev_commits_proportion_by_dev_cdf() {
+        local unreviewed_commits=$1
+        local reviewed_commits=$2
+        local stat_name=$3
+
+    cat ${DATADIR}/commits_with_author |\
+        LC_ALL=C join -t$'\t' - $unreviewed_commits |\
+        gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
+        gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
+        gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
+        jq --slurp --raw-input --arg stat_name $stat_name -f ${DIR}/cdf2json.jq
+}
+
+unrev_commits_proportion_by_dev_cdf "${ANALYSISDIR}/unreviewed_commits" "${ANALYSISDIR}/reviewed_commits" "unrev_commits_proportion_by_dev_cdf"
+unrev_commits_proportion_by_dev_cdf "${ANALYSISDIR}/unreviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "ur_v_nzc_unrev_commits_proportion_by_dev_cdf"
+unrev_commits_proportion_by_dev_cdf "${ANALYSISDIR}/reviewed_commits.zc" "${ANALYSISDIR}/reviewed_commits.nzc" "zc_v_nzc_unrev_commits_proportion_by_dev_cdf"
+
 
 echo "devs per PR" > /dev/stderr
 cat ${DATADIR}/pr_comments_data | cut -f 1,2,4 | sort -u |\
@@ -245,14 +395,6 @@ cat ${DATADIR}/pr_comments_data | cut -f 1,2,4 | sort -u |\
     LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/pr_status | gawk -F\\t '{printf("%s-%s\t%d\n", $4,$2,$3)}' |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name dev_per_pr -f ${DIR}/gs2json.jq
-
-echo "commit distribution across authors (during analysis period)" > /dev/stderr
-cat ${DATADIR}/commits_with_author |\
-    LC_ALL=C join -t$'\t' - <(cat ${ANALYSISDIR}/reviewed_commits ${ANALYSISDIR}/unreviewed_commits | LC_ALL=C sort) |\
-    gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
-    gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
-    gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
-    jq --slurp --raw-input --arg stat_name during_pr_commits_proportion_by_dev_cdf -f ${DIR}/cdf2json.jq
 
 echo "PR merge commits during analysis period" > /dev/stderr
 printf "%d\t%d\t%d\t%d\n"\
@@ -283,6 +425,13 @@ echo "PR comment count summary" > /dev/stderr
 cat ${DATADIR}/commentcounts | LC_ALL=C sort | join -t$'\t' ${ANALYSISDIR}/pr_status - | gawk -F\\t '{printf("%s-%s\t%d\n", $2, $6, $7)}' |\
     gawk -F\\t -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name pr_comment_summary -f ${DIR}/gs2json.jq
+
+echo "PR comment distribution" > /dev/stderr
+LC_ALL=C join -t $'\t' -o 0,1.2,1.3 ${DATADIR}/commentcounts ${ANALYSISDIR}/pr_status  |\
+    ag 'allcommentswzero' | cut -f 3 | sort -n |\
+    gawk -f ~/src/autodev-funicular/src/statstool/cdf.awk <(echo "0_1_2_3_4_5_7_10_15_20_30_50_75_100" | tr '_' '\n') - |\
+    jq -c --slurp --raw-input --arg stat_name pr_comment_cdf -f ${DIR}/cdf2json.jq
+
 
 echo "PR lifetime summary" > /dev/stderr
 cat ${ANALYSISDIR}/pr_status | gawk -F\\t -i ${DIR}/date.awk 'BEGIN {OFS="\t"} $2=="open" {print $2, systime() - parsedate($3)} $2!="open" { print $2, parsedate($4) - parsedate($3)}' |\
@@ -315,21 +464,5 @@ cat ${DATADIR}/pr_comments_data |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name pr_time_per_pr_wzero -f ${DIR}/gs2json.jq
 
-echo "commit distribution across authors (reviewed)" > /dev/stderr
-cat ${DATADIR}/commits_with_author |\
-    LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/reviewed_commits |\
-    gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
-    gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
-    gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
-    jq --slurp --raw-input --arg stat_name rev_commits_proportion_by_dev_cdf -f ${DIR}/cdf2json.jq
-
-echo "commit distribution across authors (unreviewed)" > /dev/stderr
-cat ${DATADIR}/commits_with_author |\
-    LC_ALL=C join -t$'\t' - ${ANALYSISDIR}/unreviewed_commits |\
-    gawk -F\\t '{print $2}' | sort | uniq -c | sort -rn |\
-    gawk '{d[NR]=$1;s+=$1;} END {c=0; for (x in d) { c+=d[x]/s; print c}}' |\
-    gawk -f ${DIR}/cdf.awk <(echo "0.1_0.25_0.5_0.75_0.8_0.9_0.95_0.99_1" | tr '_' '\n') - |\
-    jq --slurp --raw-input --arg stat_name unrev_commits_proportion_by_dev_cdf -f ${DIR}/cdf2json.jq
-
 echo "done with analysis for $SPAN_DAYS days back to ${EARLIEST_PR}" > /dev/stderr
-echo
+echo > /dev/stderr
