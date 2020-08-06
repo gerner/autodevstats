@@ -428,7 +428,7 @@ cat ${DATADIR}/commentcounts | LC_ALL=C sort | join -t$'\t' ${ANALYSISDIR}/pr_st
 
 echo "PR comment distribution" > /dev/stderr
 LC_ALL=C join -t $'\t' -o 0,1.2,1.3 ${DATADIR}/commentcounts ${ANALYSISDIR}/pr_status  |\
-    ag 'allcommentswzero' | cut -f 3 | sort -n |\
+    (ag 'allcommentswzero' || true) | cut -f 3 | sort -n |\
     gawk -f ~/src/autodev-funicular/src/statstool/cdf.awk <(echo "0_1_2_3_4_5_7_10_15_20_30_50_75_100" | tr '_' '\n') - |\
     jq -c --slurp --raw-input --arg stat_name pr_comment_cdf -f ${DIR}/cdf2json.jq
 
