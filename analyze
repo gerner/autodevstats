@@ -437,6 +437,20 @@ echo "PR lifetime summary" > /dev/stderr
 cat ${ANALYSISDIR}/pr_status | gawk -F\\t -i ${DIR}/date.awk 'BEGIN {OFS="\t"} $2=="open" {print $2, systime() - parsedate($3)} $2!="open" { print $2, parsedate($4) - parsedate($3)}' |\
     gawk -M -f ${DIR}/groupstats.awk |\
     jq -c --slurp --raw-input --arg stat_name pr_lifetime_summary -f ${DIR}/gs2json.jq
+
+echo "PR lifetime distribution" > /dev/stderr
+cat ${ANALYSISDIR}/pr_status |\
+    gawk -F\\t -i ${DIR}/date.awk 'BEGIN {OFS="\t"} $2=="merged" { print parsedate($4) - parsedate($3)}' |\
+    sort -n |\
+    gawk -f ~/src/autodev-funicular/src/statstool/cdf.awk <(echo "0_600_1800_3600_7200_14400_28800_43200_86400_172800_259200_432000_604800_864000_1209600_1814400_2592000_5184000_7776000_15552000_31536000" | tr '_' '\n') - |\
+    jq -c --slurp --raw-input --arg stat_name merged_pr_lifetime_cdf -f ${DIR}/cdf2json.jq
+
+cat ${ANALYSISDIR}/pr_status |\
+    gawk -F\\t -i ${DIR}/date.awk 'BEGIN {OFS="\t"} $2=="closed" { print parsedate($4) - parsedate($3)}' |\
+    sort -n |\
+    gawk -f ~/src/autodev-funicular/src/statstool/cdf.awk <(echo "0_600_1800_3600_7200_14400_28800_43200_86400_172800_259200_432000_604800_864000_1209600_1814400_2592000_5184000_7776000_15552000_31536000" | tr '_' '\n') - |\
+    jq -c --slurp --raw-input --arg stat_name closed_pr_lifetime_cdf -f ${DIR}/cdf2json.jq
+
 echo "PR cycle count per PR by outcome" > /dev/stderr
 cat ${DATADIR}/pr_comments_data |\
     gawk -F\\t '$6 >= "'${EARLIEST_PR}'"' |\
