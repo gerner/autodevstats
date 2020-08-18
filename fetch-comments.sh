@@ -17,6 +17,10 @@ if [ -z "${HEADER_ACCEPT}" ]; then
     HEADER_ACCEPT=""
 fi
 
+if [ -z "${ZERO_TERMINATE}" ]; then
+    ZERO_TERMINATE="false"
+fi
+
 set -eu -o pipefail
 
 #make sure we can recover some info if we die in the middle of fetching data
@@ -119,8 +123,18 @@ while read NEXTURL; do
 
             #optionally prefix with the url we just fetched
             ! ${PREFIX_URL} || printf "%s\t" ${NEXTURL}
-            cat ${COMMENTS} | tr -d '\n' #>> ${ALLCOMMENTS}
-            echo "" #>> ${ALLCOMMENTS}
+
+            if ${ZERO_TERMINATE}; then
+                cat ${COMMENTS} #>> ${ALLCOMMENTS}
+            else
+                cat ${COMMENTS} | tr -d '\n' #>> ${ALLCOMMENTS}
+            fi
+
+            if ${ZERO_TERMINATE}; then
+                echo -ne '\0'
+            else
+                echo "" #>> ${ALLCOMMENTS}
+            fi
 
 
             NEXTURL=$(cat ${HEADERS} | grep '^Link: ' | tr ',' '\n' | grep 'rel="next"' | sed 's/.*<\([^>]*\).*/\1/' || true)
