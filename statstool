@@ -632,13 +632,13 @@ pv ${DATADIR}/metadata.gz | zcat | cut -f4,5 |\
     >> ${DATADIR}/stats.json
 
 echo "dead code lifetime distribution"
-pv ${DATADIR}/metadata.gz | zcat | ag 'died' | cut -f 5 | sort -n |\
+pv ${DATADIR}/metadata.gz | zcat | (ag 'died' || true) | cut -f 5 | sort -n |\
     gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
     jq -c --slurp --raw-input --arg stat_name code_lifetime_died_cdf -f ${DIR}/cdf2json.jq\
     >> ${DATADIR}/stats.json
 
 echo "live code lifetime distribution"
-pv ${DATADIR}/metadata.gz | zcat | ag 'live' | cut -f 5 | sort -n |\
+pv ${DATADIR}/metadata.gz | zcat | (ag 'live' || true) | cut -f 5 | sort -n |\
     gawk -f ${DIR}/cdf.awk <(echo -n "86400_604800_1209600_2592000_5184000_7776000_15552000_31104000" | tr '_' '\n') - |\
     jq -c --slurp --raw-input --arg stat_name code_lifetime_live_cdf -f ${DIR}/cdf2json.jq\
     >> ${DATADIR}/stats.json
