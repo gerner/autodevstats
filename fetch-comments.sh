@@ -21,6 +21,10 @@ if [ -z "${ZERO_TERMINATE}" ]; then
     ZERO_TERMINATE="false"
 fi
 
+if [ -z "${BASE64}" ]; then
+    BASE64="true"
+fi
+
 set -eu -o pipefail
 
 #make sure we can recover some info if we die in the middle of fetching data
@@ -51,6 +55,12 @@ RETRY_MAX_COUNT=10
 PV_PIDFILE=$(mktemp -u --tmpdir autodev_fetch_pvpid.XXXXXXXXXX)
 FETCH_FIFO=$(mktemp -u --tmpdir autodev_fetch_fifo.XXXXXXXXXX)
 $SILENT || mkfifo $FETCH_FIFO
+
+if $BASE64; then
+    ENCODER="base64 -w0"
+else
+    ENCODER=cat
+fi
 
 while read NEXTURL; do
 
@@ -103,15 +113,16 @@ while read NEXTURL; do
             echo "sleeping $sleeptime" > /dev/stderr
             sleep ${sleeptime}
         #TODO: I don't think we should support 404 at all. no results should just be an empty array, not a 404
+        # 404 can come up with the diff endpoints when then diff is unavailable for some reason
         #check if there simply are no results
-        #elif grep --silent '404 Not Found' ${HEADERS}; then
-        #    echo "no results for ${NEXTURL}" > /dev/stderr
-        #    if [ -z "${TOTALPAGES}" ]; then
-        #        exit
-        #    else
-        #        echo "this is unexpected as we should have ${TOTALPAGES} pages" > /dev/stderr
-        #        exit 1
-        #    fi
+        elif grep --silent '404 Not Found' ${HEADERS}; then
+            echo "no results for ${NEXTURL}" > /dev/stderr
+            if [ -z "${TOTALPAGES}" ]; then
+                exit
+            else
+                echo "this is unexpected as we should have ${TOTALPAGES} pages" > /dev/stderr
+                exit 1
+            fi
         else
             retry_count=0
             retry_sleep=$RETRY_TIME
@@ -124,10 +135,10 @@ while read NEXTURL; do
             #optionally prefix with the url we just fetched
             ! ${PREFIX_URL} || printf "%s\t" ${NEXTURL}
 
-            if ${ZERO_TERMINATE}; then
-                cat ${COMMENTS} #>> ${ALLCOMMENTS}
+            if ${ZERO_TERMINATE} || ${BASE64}; then
+                cat ${COMMENTS} | $ENCODER #>> ${ALLCOMMENTS}
             else
-                cat ${COMMENTS} | tr -d '\n' #>> ${ALLCOMMENTS}
+                cat ${COMMENTS} | tr -d '\n' | $ENCODER #>> ${ALLCOMMENTS}
             fi
 
             if ${ZERO_TERMINATE}; then
