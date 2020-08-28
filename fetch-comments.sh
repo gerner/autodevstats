@@ -25,6 +25,10 @@ if [ -z "${BASE64}" ]; then
     BASE64="true"
 fi
 
+if [ -z "${BEST_EFFORT}"]; then
+    BEST_EFFORT="false"
+fi
+
 set -eu -o pipefail
 
 #make sure we can recover some info if we die in the middle of fetching data
@@ -102,16 +106,25 @@ while read NEXTURL; do
         elif grep --silent '403 Forbidden' ${HEADERS}; then
             retry_count=0
             retry_sleep=$RETRY_TIME
-            #handle rate limiting
-            echo "rate limit" > /dev/stderr
 
-            reset_time=$(grep '^X-RateLimit-Reset: [0-9]*' ${HEADERS} | sed 's/^X-RateLimit-Reset: \([0-9]*\).*/\1/')
+            if grep -q '^X-RateLimit-Reset: [0-9]*' ${HEADERS}; then
+                #handle rate limiting
+                echo "rate limit" > /dev/stderr
 
-            grep 'X-RateLimit-' ${HEADERS} > /dev/stderr
+                reset_time=$(grep '^X-RateLimit-Reset: [0-9]*' ${HEADERS} | sed 's/^X-RateLimit-Reset: \([0-9]*\).*/\1/')
 
-            sleeptime=$(( $(( ${reset_time} - $(date +%s) )) + 10 ))
-            echo "sleeping $sleeptime" > /dev/stderr
-            sleep ${sleeptime}
+                grep 'X-RateLimit-' ${HEADERS} > /dev/stderr
+
+                sleeptime=$(( $(( ${reset_time} - $(date +%s) )) + 10 ))
+                echo "sleeping $sleeptime" > /dev/stderr
+                sleep ${sleeptime}
+            elif ${BEST_EFFORT} && (cat ${COMMENTS} | head -c256 | grep -q "error: too big or took too long to generate"); then
+                #sometimes on diffs we get a 403 with "error: too big"
+                echo "error too big, skipping ${NEXTURL}" > /dev/stderr
+            else
+                echo "unknown error, check ${HEADERS} and ${COMMENTS}" > /dev/stderr
+                exit 1
+            fi
         #TODO: I don't think we should support 404 at all. no results should just be an empty array, not a 404
         # 404 can come up with the diff endpoints when then diff is unavailable for some reason
         #check if there simply are no results
