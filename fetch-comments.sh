@@ -25,7 +25,7 @@ if [ -z "${BASE64}" ]; then
     BASE64="true"
 fi
 
-if [ -z "${BEST_EFFORT}"]; then
+if [ -z "${BEST_EFFORT}" ]; then
     BEST_EFFORT="false"
 fi
 
