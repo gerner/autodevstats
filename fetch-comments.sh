@@ -29,6 +29,16 @@ if [ -z "${BEST_EFFORT}" ]; then
     BEST_EFFORT="false"
 fi
 
+if [ -z "${RETRY_MAX_COUNT}" ]; then
+    RETRY_MAX_COUNT=""
+fi
+
+if [ -z "${MAX_TIME}" ]; then
+    MAX_TIME=""
+else
+    MAX_TIME="--max-time ${MAX_TIME}"
+fi
+
 set -eu -o pipefail
 
 #make sure we can recover some info if we die in the middle of fetching data
@@ -53,7 +63,9 @@ trap 'echo "[ERROR] Error occurred at $BASH_SOURCE:$LINENO command: $BASH_COMMAN
 #fi
 
 RETRY_TIME=1
-RETRY_MAX_COUNT=10
+if [ -z "$RETRY_MAX_COUNT" ]; then
+    RETRY_MAX_COUNT=10
+fi
 
 #a fifo for tracking progress for each input url
 PV_PIDFILE=$(mktemp -u --tmpdir autodev_fetch_pvpid.XXXXXXXXXX)
@@ -92,13 +104,19 @@ while read NEXTURL; do
         fi
 
 
-        if (! curl -L --compressed -s -D ${HEADERS} -H "Authorization: token ${GITHUB_TOKEN}" -H "Accept: ${HEADER_ACCEPT}" "${NEXTURL}" > ${COMMENTS} ) || grep -E --silent '^HTTP/[^ ]+ +5[0-9][0-9]' ${HEADERS}; then
+        if (! curl ${MAX_TIME} -L --compressed -s -D ${HEADERS} -H "Authorization: token ${GITHUB_TOKEN}" -H "Accept: ${HEADER_ACCEPT}" "${NEXTURL}" > ${COMMENTS} ) || grep -E --silent '^HTTP/[^ ]+ +5[0-9][0-9]' ${HEADERS}; then
+            echo "error ${PIPESTATUS[0]}" > /dev/stderr
             #handle server errors with retry
             #we do this manually to avoid polluting the output with server
             #error output
             if [ "$retry_count" -ge "$RETRY_MAX_COUNT" ]; then
                 echo "exceeded max retry count ${retry_count} on ${NEXTURL}" > /dev/stderr
-                exit 1;
+                if $BEST_EFFORT; then
+                    "skipping ${NEXTURL}" > /dev/stderr
+                    continue
+                else
+                    exit 1;
+                fi
             fi
             retry_count=$(( $retry_count + 1 ))
             retry_sleep=$(( $retry_sleep * 2 ))
