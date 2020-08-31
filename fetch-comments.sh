@@ -22,7 +22,7 @@ if [ -z "${ZERO_TERMINATE}" ]; then
 fi
 
 if [ -z "${BASE64}" ]; then
-    BASE64="true"
+    BASE64="false"
 fi
 
 if [ -z "${BEST_EFFORT}" ]; then
@@ -112,7 +112,8 @@ while read NEXTURL; do
             if [ "$retry_count" -ge "$RETRY_MAX_COUNT" ]; then
                 echo "exceeded max retry count ${retry_count} on ${NEXTURL}" > /dev/stderr
                 if $BEST_EFFORT; then
-                    "skipping ${NEXTURL}" > /dev/stderr
+                    echo "skipping ${NEXTURL}" > /dev/stderr
+                    NEXTURL=""
                     continue
                 else
                     exit 1;
@@ -139,6 +140,8 @@ while read NEXTURL; do
             elif ${BEST_EFFORT} && (cat ${COMMENTS} | head -c256 | grep -q "error: too big or took too long to generate"); then
                 #sometimes on diffs we get a 403 with "error: too big"
                 echo "error too big, skipping ${NEXTURL}" > /dev/stderr
+                NEXTURL=""
+                continue
             else
                 echo "unknown error, check ${HEADERS} and ${COMMENTS}" > /dev/stderr
                 exit 1
