@@ -432,6 +432,24 @@ LC_ALL=C join -t $'\t' -o 0,1.2,1.3 ${DATADIR}/commentcounts ${ANALYSISDIR}/pr_s
     gawk -f ${DIR}/cdf.awk <(echo "0_1_2_3_4_5_7_10_15_20_30_50_75_100" | tr '_' '\n') - |\
     jq -c --slurp --raw-input --arg stat_name pr_comment_cdf -f ${DIR}/cdf2json.jq
 
+echo "PR comment distribution (open)" > /dev/stderr
+LC_ALL=C join -t $'\t' -o 0,1.2,1.3 ${DATADIR}/commentcounts <(cat ${ANALYSISDIR}/pr_status | ag 'open') |\
+    (ag 'allcommentswzero' || true) | cut -f 3 | sort -n |\
+    gawk -f ${DIR}/cdf.awk <(echo "0_1_2_3_4_5_7_10_15_20_30_50_75_100" | tr '_' '\n') - |\
+    jq -c --slurp --raw-input --arg stat_name open_pr_comment_cdf -f ${DIR}/cdf2json.jq
+
+echo "PR comment distribution (merged)" > /dev/stderr
+LC_ALL=C join -t $'\t' -o 0,1.2,1.3 ${DATADIR}/commentcounts <(cat ${ANALYSISDIR}/pr_status | ag 'merged') |\
+    (ag 'allcommentswzero' || true) | cut -f 3 | sort -n |\
+    gawk -f ${DIR}/cdf.awk <(echo "0_1_2_3_4_5_7_10_15_20_30_50_75_100" | tr '_' '\n') - |\
+    jq -c --slurp --raw-input --arg stat_name merged_pr_comment_cdf -f ${DIR}/cdf2json.jq
+
+echo "PR comment distribution (closed)" > /dev/stderr
+LC_ALL=C join -t $'\t' -o 0,1.2,1.3 ${DATADIR}/commentcounts <(cat ${ANALYSISDIR}/pr_status | ag 'closed') |\
+    (ag 'allcommentswzero' || true) | cut -f 3 | sort -n |\
+    gawk -f ${DIR}/cdf.awk <(echo "0_1_2_3_4_5_7_10_15_20_30_50_75_100" | tr '_' '\n') - |\
+    jq -c --slurp --raw-input --arg stat_name closed_pr_comment_cdf -f ${DIR}/cdf2json.jq
+
 
 echo "PR lifetime summary" > /dev/stderr
 cat ${ANALYSISDIR}/pr_status | gawk -F\\t -i ${DIR}/date.awk 'BEGIN {OFS="\t"} $2=="open" {print $2, systime() - parsedate($3)} $2!="open" { print $2, parsedate($4) - parsedate($3)}' |\
