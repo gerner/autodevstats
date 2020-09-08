@@ -234,8 +234,8 @@ function commit_review_size_by_outcome() {
     local stat_name=$3
 
     cat\
-        <(cat ${ANALYSISDIR}/reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
-        <(cat ${ANALYSISDIR}/unreviewed_commits | cut -f1 | gawk '{printf("%s\tunreviewed\n", $1)}') |\
+        <(cat $reviewed_commits | cut -f1 | gawk '{printf("%s\treviewed\n", $1)}')\
+        <(cat $unreviewed_commits | cut -f1 | gawk '{printf("%s\tunreviewed\n", $1)}') |\
         LC_ALL=C sort |\
         LC_ALL=C join <(pv ${ANALYSISDIR}/metadata.gz | zcat | cut -f 2,4 | LC_ALL=C sort) - |\
         LC_ALL=C sort | uniq -c |\
