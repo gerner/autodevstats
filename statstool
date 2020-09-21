@@ -15,11 +15,21 @@ fi
 
 set -eu -o pipefail
 
+# cross-OS compatibility (greadlink, gsed, gzcat are GNU implementations for OS X)
+[[ $(uname) == 'Darwin' ]] && {
+    which greadlink gsed gzcat > /dev/null && {
+    unalias readlink sed zcat
+        alias readlink=greadlink sed=gsed zcat=gzcat
+    } || {
+        echo 'ERROR: GNU utils required for Mac. You may use homebrew to install them: brew install coreutils gnu-sed'
+        exit 1
+    }
+}
+
 PR_SAMPLESIZE=250
 COMMIT_PR_SAMPLESIZE=200
 
 #an outer bound for how many pages of PRs we'll try to fetch
-#TODO: we'll need to expand this to more reliably capture 1 year of history
 #this is enough to hopefully capture ~1 year of PRs even for very active repos
 #the vast majority (>95%) of OSS benchmark repos are captured by just 20 pages
 MAX_ALL_PR_PAGES=60
@@ -36,10 +46,14 @@ echo "if they are not the dependency check that follows will fail."
 echo "see README.md in the same folder as statstool for details."
 echo
 echo "checking for dependencies..."
+echo "checking for zcat..."
+zcat --version | grep 'zcat (gzip) 1\.'
 echo "checking for curl..."
 curl --version | grep 'curl 7\.[0-9]'
 echo "checking for git..."
 git --version | grep 'git version [0-9]'
+echo "checking for sed..."
+sed --version | grep "sed.* 4\."
 echo "checking for awk..."
 gawk --version | grep 'GNU Awk [0-9]'
 echo "checking for join..."
