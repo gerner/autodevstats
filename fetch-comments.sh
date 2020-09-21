@@ -41,6 +41,18 @@ fi
 
 set -eu -o pipefail
 
+# cross-OS compatibility (greadlink, gsed, gzcat are GNU implementations for OS X)
+[[ $(uname) == 'Darwin' ]] && {
+    shopt -s expand_aliases
+    which greadlink gsed gzcat gjoin gmktemp > /dev/null && {
+        unalias readlink sed zcat join mktemp
+        alias readlink=greadlink sed=gsed zcat=gzcat join=gjoin mktemp=gmktemp
+    } || {
+        echo 'ERROR: GNU utils required for Mac. You may use homebrew to install them: brew install coreutils gnu-sed'
+        exit 1
+    }
+}
+
 #make sure we can recover some info if we die in the middle of fetching data
 trap 'echo "[ERROR] Error occurred at $BASH_SOURCE:$LINENO command: $BASH_COMMAND exit: $?" > /dev/stderr' ERR
 
