@@ -1,5 +1,7 @@
 # Computing Stats for a Repo
 
+![Developer Stats Scorecard](scorecard.png "Developer Stats Scorecard")
+
 Run in a local repo, get stats about dev behavior like code churn and PRs.
 
 The idea is to compute some high-level dev engagement and behavior stats to get
