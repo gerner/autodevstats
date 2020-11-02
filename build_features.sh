@@ -1,5 +1,7 @@
 #!/bin/bash
 
+set -x
+
 if [ -z "$FILE_EXCLUDE_PATHS" ]; then
     FILE_EXCLUDE_PATHS=""
 fi
@@ -103,7 +105,7 @@ echo "get diffs from those commits (this might take a while) to ${FILE_LINES}"
 cat ${FILE_COMMITS} |\
     gawk -F\\t 'function printgitshow(ncommits, commits, filename) {if(ncommits <= 0) { return; } quoted_filename=filename; if(quoted_filename !~ /^".*"$/) { quoted_filename=sprintf("\"%s\"", quoted_filename);} escaped_filename=filename; gsub(/[\\]/, "\\\\", escaped_filename); gsub(/"/, "\\\"", escaped_filename); printf("git show --no-renames -m --first-parent -U0 --format=\"merging %%H %%H %s%%x0A%%h %%s\" %s -- %s\n", escaped_filename, commits, quoted_filename);} BEGIN {commits="";ncommits=0} ncommits>=100 || $4 != lastf {printgitshow(ncommits, commits, lastf);ncommits=0; commits=""} {ncommits+=1; commits = commits " " $2; lastf=$4} END {printgitshow(ncommits, commits, lastf) }' |\
     bash | pv -Nbytes -c | tee >(gzip -c > ${FILE_LINES}) |\
-    ag '^merging [a-f0-9]{40}' | pv -c -Ncommits -l -s$(cat ${FILE_COMMITS} | wc -l) > /dev/null
+    (ag '^merging [a-f0-9]{40}' || true) | pv -c -Ncommits -l -s$(cat ${FILE_COMMITS} | wc -l) > /dev/null
 
 # follow line changes through from birth to death (command using process_diffs.awk, this outputs a log of birth/death events for lines, but also dumps the lines of code and new/old diff hunks for all commits)
 #process diffs file (creates linelog with birth/death events,
