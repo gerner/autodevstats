@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -x
-
 if [ -z "$FILE_EXCLUDE_PATHS" ]; then
     FILE_EXCLUDE_PATHS=""
 fi
@@ -55,7 +53,7 @@ FILE_METADATA=${DATADIR}/metadata.gz
 # choose the commits you're going to look at (git log)
 # get all the filestatuses for relevant changes
 echo "listing commits on $DEFAULT_BRANCH to ${FILE_FILESTATUS}"
-git log --no-renames -m --first-parent --name-status --topo-order --format='%H%x09%ct%x09%P' $DEFAULT_BRANCH | gawk 'BEGIN {OFS="\t"} NR == 1 {next_master=$1;last_master=$1} next_master != "" && $1 == next_master { next_master = $3; last_master=$1} $1 ~ /^[a-f0-9]{40}$/ {last_commit = $1} NF > 0 && $1 !~ /^[a-f0-9]{40}$/ { print last_master, last_commit, $0}' | pv > ${FILE_FILESTATUS}
+git log --no-renames -m --first-parent --name-status --topo-order --format='%H%x09%ct%x09%P' $DEFAULT_BRANCH -- | gawk 'BEGIN {OFS="\t"} NR == 1 {next_master=$1;last_master=$1} next_master != "" && $1 == next_master { next_master = $3; last_master=$1} $1 ~ /^[a-f0-9]{40}$/ {last_commit = $1} NF > 0 && $1 !~ /^[a-f0-9]{40}$/ { print last_master, last_commit, $0}' | pv > ${FILE_FILESTATUS}
 
 #exclude external files and documentation
 echo "filtering external/3rd party files and documentation..."
@@ -77,7 +75,7 @@ fi
 
 #get some metadata
 echo "getting commit dates..."
-git log --no-renames --first-parent --topo-order --format='%H%x09%ct%x09%P%x09%t%x09%s' $DEFAULT_BRANCH | cut -f 1,2 | LC_ALL=C sort -u > ${FILE_COMMIT_DATES}
+git log --no-renames --first-parent --topo-order --format='%H%x09%ct%x09%P%x09%t%x09%s' $DEFAULT_BRANCH -- | cut -f 1,2 | LC_ALL=C sort -u > ${FILE_COMMIT_DATES}
 
 # create the list of commits
 #I'm explicitly filtering out some files that have irritating characters
