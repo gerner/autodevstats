@@ -25,6 +25,8 @@ set -eu -o pipefail
 #TODO: handle having pv or not
 #TODO: handle having ag or not
 
+echo "repo size: $(du -h .git | tail -n1)" > /dev/stderr
+
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 # go from git checkout to fixed-size feature for downstream model training
@@ -92,6 +94,9 @@ if [ ! -s ${FILE_COMMITS} ]; then
     echo "${unique_files} files passed filtering for history"
     exit 1
 fi
+
+echo "files: $(cat ${FILE_FILELIST} | wc -l)" > /dev/stderr
+echo "commits: $(cat ${FILE_COMMITS} | wc -l)" > /dev/stderr
 
 #TODO: sampling commits goes here (sample files and then get all related commits?)
 
