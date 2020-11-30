@@ -67,12 +67,17 @@ echo "checking for ag..."
 ag --version | grep 'ag version [0-9]'
 echo "checking for mktemp..."
 mktemp --version | grep 'mktemp'
+echo "checking for date..."
+date --version | grep 'GNU coreutils'
 
 echo "running a quick test..."
 testfile=$(mktemp tmp.XXXXXXXXXX.gz)
 echo "hello" | gzip -c > $testfile
 zcat $testfile | sed 's/hello/hiya/' | gawk '/hiya/ { printf("{\"message\":\"sed gawk pv jq and ag all work\"}\n")}' | pv -s 1 -l | jq '.message' | ag 'sed gawk pv jq and ag all work'
 rm $testfile
+
+test_date="$(date --utc)"
+date -d@$(date -d "${test_date}" +%s) --utc | grep "${test_date}"
 
 echo "dependencies look good"
 echo
