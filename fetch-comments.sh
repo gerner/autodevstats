@@ -44,9 +44,9 @@ set -eu -o pipefail
 # cross-OS compatibility (greadlink, gsed, gzcat are GNU implementations for OS X)
 [[ $(uname) == 'Darwin' ]] && {
     shopt -s expand_aliases
-    which greadlink gsed gzcat gjoin gmktemp > /dev/null && {
-        unalias readlink sed zcat join mktemp >/dev/null 2>/dev/null
-        alias readlink=greadlink sed=gsed zcat=gzcat join=gjoin mktemp=gmktemp
+    which greadlink gsed gzcat gjoin gmktemp gdate > /dev/null && {
+        unalias readlink sed zcat join mktemp date >/dev/null 2>/dev/null
+        alias readlink=greadlink sed=gsed zcat=gzcat join=gjoin mktemp=gmktemp date=gdate
     } || {
         echo 'ERROR: GNU utils required for Mac. You may use homebrew to install them: brew install coreutils gnu-sed'
         exit 1
