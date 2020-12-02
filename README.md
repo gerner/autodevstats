@@ -51,22 +51,6 @@ The tool has a few dependencies:
 * ag
 * jq
 
-on a debian based linux distro, you can install these with:
-
-```
-sudo apt-get install curl git gawk coreutils pv silversearcher-ag jq
-```
-
-on mac os:
-
-Install the dependencies and then update your path to put the standard gnu
-coreutils tools on your path.
-
-```
-brew install the_silver_searcher coreutils curl git pv gawk jq
-export PATH="$(brew --prefix coreutils)/libexec/gnubin:$PATH"
-```
-
 The tool will check for dependencies as the first thing it does. You should see
 output like below if everything is ok. If not, it'll exit at the first check
 that fails.
@@ -86,6 +70,24 @@ pv 1.6.6 - Copyright 2015 Andrew Wood <andrew.wood@ivarch.com>
 checking for ag...
 ag version 2.1.0
 dependencies look good
+```
+
+### Mac OS
+
+Install the dependencies and then update your path to put the standard gnu
+coreutils tools on your path.
+
+```
+brew install the_silver_searcher coreutils curl git pv gawk jq
+export PATH="$(brew --prefix coreutils)/libexec/gnubin:$PATH"
+```
+
+### Linux/WSL
+
+on a debian based linux distro, you can install these with:
+
+```
+sudo apt-get install curl git gawk coreutils pv silversearcher-ag jq
 ```
 
 ## GitHub API Token

@@ -22,9 +22,9 @@ set -eu -o pipefail
 # cross-OS compatibility (greadlink, gsed, gzcat are GNU implementations for OS X)
 [[ $(uname) == 'Darwin' ]] && {
     shopt -s expand_aliases
-    which greadlink gsed gzcat gjoin gmktemp gdate > /dev/null && {
-        unalias readlink sed zcat join mktemp date >/dev/null 2>/dev/null
-        alias readlink=greadlink sed=gsed zcat=gzcat join=gjoin mktemp=gmktemp date=gdate
+    which greadlink gsed gzcat gjoin gmktemp gdate gwc > /dev/null && {
+        unalias readlink sed zcat join mktemp date wc >/dev/null 2>/dev/null
+        alias readlink=greadlink sed=gsed zcat=gzcat join=gjoin mktemp=gmktemp date=gdate wc=gwc
     } || {
         echo 'ERROR: GNU utils required for Mac. You may use homebrew to install them: brew install coreutils gnu-sed'
         exit 1
@@ -75,11 +75,14 @@ echo "checking for mktemp..."
 mktemp --version | grep 'mktemp'
 echo "checking for date..."
 date --version | grep 'GNU coreutils'
+echo "checking for wc..."
+wc --version | grep 'GNU coreutils'
 
 echo "running a quick test..."
 testfile=$(mktemp tmp.XXXXXXXXXX.gz)
 echo "hello" | gzip -c > $testfile
 zcat $testfile | sed 's/hello/hiya/' | gawk '/hiya/ { printf("{\"message\":\"sed gawk pv jq and ag all work\"}\n")}' | pv -s 1 -l | jq '.message' | ag 'sed gawk pv jq and ag all work'
+zcat $testfile | wc -l | ag '^1$'
 rm $testfile
 
 test_date="$(date --utc)"
