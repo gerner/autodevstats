@@ -159,13 +159,13 @@ if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] ; then
     echo "checking access to github for ${REPO}..."
     REPO_URL="https://api.github.com/repos/${REPO}"
     curl -L --compressed -s -H "Authorization: token ${GITHUB_TOKEN}" "${REPO_URL}" > ${DATADIR}/repo
-    if ! cat ${DATADIR}/repo | jq '.full_name' | ag -v null > /dev/null; then
+    if ! cat ${DATADIR}/repo | jq '.full_name' | ag -v '^null$' > /dev/null; then
         echo "no access to ${REPO_URL}"
         echo "check that your access token has access to the repos scope"
         echo "see GitHub's documentation here: https://help.github.com/en/github/authenticating-to-github/creating-a-personal-access-token-for-the-command-line"
         echo "we need the \"repo\" top-level scope as described in the tutorial"
         exit 1
-    elif ! cat ${DATADIR}/repo | jq '.full_name' | ag "${REPO}" > /dev/null; then
+    elif ! cat ${DATADIR}/repo | jq '.full_name' | ag '^"'"${REPO}"'"$' > /dev/null; then
         NEW_REPO_NAME=$(cat ${DATADIR}/repo | jq '.full_name')
         echo "it appears that ${REPO} has been renamed to ${NEW_REPO_NAME}"
         if $FAIL_ON_RENAME; then
