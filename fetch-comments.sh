@@ -116,7 +116,7 @@ while read NEXTURL; do
         fi
 
 
-        if (! curl ${MAX_TIME} -L --compressed -s -D ${HEADERS} -H "Authorization: token ${GITHUB_TOKEN}" -H "Accept: ${HEADER_ACCEPT}" "${NEXTURL}" > ${COMMENTS} ) || grep -E --silent '^HTTP/[^ ]+ +5[0-9][0-9]' ${HEADERS}; then
+        if (! curl ${MAX_TIME} --http1.1 -L --compressed -s -D ${HEADERS} -H "Authorization: token ${GITHUB_TOKEN}" -H "Accept: ${HEADER_ACCEPT}" "${NEXTURL}" > ${COMMENTS} ) || grep -E --silent '^HTTP/[^ ]+ +5[0-9][0-9]' ${HEADERS}; then
             echo "error ${PIPESTATUS[0]}" > /dev/stderr
             #handle server errors with retry
             #we do this manually to avoid polluting the output with server
@@ -138,13 +138,13 @@ while read NEXTURL; do
             retry_count=0
             retry_sleep=$RETRY_TIME
 
-            if grep -q '^X-RateLimit-Reset: [0-9]*' ${HEADERS}; then
+            if grep -q '^[Xx]-[Rr]ate[Ll]imit-[Rr]eset: [0-9]*' ${HEADERS}; then
                 #handle rate limiting
                 echo "rate limit" > /dev/stderr
 
-                reset_time=$(grep '^X-RateLimit-Reset: [0-9]*' ${HEADERS} | sed 's/^X-RateLimit-Reset: \([0-9]*\).*/\1/')
+                reset_time=$(grep '^[Xx]-[Rr]ate[Ll]imit-[Rr]eset: [0-9]*' ${HEADERS} | sed 's/^[Xx]-[Rr]ate[Ll]imit-[Rr]eset: \([0-9]*\).*/\1/')
 
-                grep 'X-RateLimit-' ${HEADERS} > /dev/stderr
+                grep '[Xx]-[Rr]ate[Ll]imit-' ${HEADERS} > /dev/stderr
 
                 sleeptime=$(( $(( ${reset_time} - $(date +%s) )) + 10 ))
                 echo "sleeping $sleeptime" > /dev/stderr
@@ -194,10 +194,10 @@ while read NEXTURL; do
             fi
 
 
-            NEXTURL=$(cat ${HEADERS} | grep '^Link: ' | tr ',' '\n' | grep 'rel="next"' | sed 's/.*<\([^>]*\).*/\1/' || true)
+            NEXTURL=$(cat ${HEADERS} | grep '^[Ll]ink: ' | tr ',' '\n' | grep 'rel="next"' | sed 's/.*<\([^>]*\).*/\1/' || true)
 
             if [ -z "${TOTALPAGES}" ]; then
-                TOTALPAGES=$(cat ${HEADERS} | grep '^Link: ' | tr ',' '\n' | grep 'rel="last"' | sed 's/.*<\([^>]*\).*/\1/' | sed 's/.*page=\([0-9]*\).*/\1/' | sed 's/.*page=\([0-9]*\).*/\1/' || echo "1")
+                TOTALPAGES=$(cat ${HEADERS} | grep '^[Ll]ink: ' | tr ',' '\n' | grep 'rel="last"' | sed 's/.*<\([^>]*\).*/\1/' | sed 's/.*page=\([0-9]*\).*/\1/' | sed 's/.*page=\([0-9]*\).*/\1/' || echo "1")
 
                 EXPECTED_PAGES=${TOTALPAGES}
                 if [ ! -z "${MAX_PAGES}" ]; then
