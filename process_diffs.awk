@@ -333,7 +333,7 @@ NR > 1 && /^merging / && $4 != lastfile {
 
     lineid = filearr[oldptr];
     if(lineid == "") {
-        print("no lineid found on line", NR);
+        print("no lineid found on line", NR) > "/dev/stderr";
         error = 1;
         exit 1;
     }
