@@ -134,7 +134,7 @@ while read NEXTURL; do
             retry_count=$(( $retry_count + 1 ))
             retry_sleep=$(( $retry_sleep * 2 ))
             sleep ${retry_sleep}
-        elif grep --silent '403 Forbidden' ${HEADERS}; then
+        elif grep --silent 'HTTP/1.1 403' ${HEADERS}; then
             retry_count=0
             retry_sleep=$RETRY_TIME
 
@@ -161,7 +161,7 @@ while read NEXTURL; do
         #TODO: I don't think we should support 404 at all. no results should just be an empty array, not a 404
         # 404 can come up with the diff endpoints when then diff is unavailable for some reason
         #check if there simply are no results
-        elif grep --silent '404 Not Found' ${HEADERS}; then
+        elif grep --silent 'HTTP/1.1 404' ${HEADERS}; then
             echo "no results for ${NEXTURL}" > /dev/stderr
             if [ -z "${TOTALPAGES}" ]; then
                 exit
@@ -173,8 +173,8 @@ while read NEXTURL; do
             retry_count=0
             retry_sleep=$RETRY_TIME
             #check if there was some other error
-            if ! grep --silent '200 OK' ${HEADERS}; then
-                echo "got bad exit code, see ${HEADERS} for details" > /dev/stderr
+            if ! grep --silent 'HTTP/1.1 200' ${HEADERS}; then
+                echo "got bad status code, see ${HEADERS} for details" > /dev/stderr
                 exit 1
             fi
 
