@@ -17,6 +17,10 @@ if [ -z "$FAIL_ON_RENAME" ]; then
     FAIL_ON_RENAME=false
 fi
 
+if [ -z "$SKIP_ANALYSIS" ]; then
+    SKIP_ANALYSIS=false
+fi
+
 set -eu -o pipefail
 
 # cross-OS compatibility (greadlink, gsed, gzcat are GNU implementations for OS X)
@@ -347,6 +351,11 @@ elif [ -d "${DATADIR}" ]; then
 else
     echo "${DATADIR} exists but isn't a directory, run without that param and we'll create a directory to hold data"
     exit 1
+fi
+
+if $SKIP_ANALYSIS; then
+    echo "done fetching data. skipping analysis."
+    exit 0
 fi
 
 
