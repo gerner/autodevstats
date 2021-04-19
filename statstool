@@ -116,7 +116,7 @@ if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] ; then
 
         ORIGIN_URL="$(git config --get-regex remote.${ORIGIN_REMOTE}.url | gawk '{print $2}')" || true
 
-        if [ -z "$ORIGIN_URL" ] || ! echo "$ORIGIN_URL" | grep -E '^(git@|https:\/\/)github.com[:\/]([^\/]*\/[^\/]*)(\.git)?$' > /dev/null; then
+        if [ -z "$ORIGIN_URL" ] || ! echo "$ORIGIN_URL" | grep -E '^(git@|https:\/\/)([^:@/]*(:[^:@]*)?@)?github.com[:\/]([^\/]*\/[^\/]*)(\.git)?$' > /dev/null; then
             echo "it looks like you don't have an origin remote, or it's not pointing to a github repository."
             echo "you can provide your own github repository, check out the README"
             exit 1
@@ -134,7 +134,7 @@ if [ -z "${DATADIR}" ] || [ ! -e "${DATADIR}" ] ; then
 
     fi
 
-    REPO=$(echo "$ORIGIN_URL" | sed 's/\.git$//' | sed -E '/^(git@|https:\/\/)github.com[:\/]/!{q1}; {s/.*github.com[:\/]([^\/]*\/[^\]*)$/\1/}')
+    REPO=$(echo "$ORIGIN_URL" | sed 's/\.git$//' | sed -E '/^(git@|https:\/\/([^:@/]*(:[^:@]*)?@)?)github.com[:\/]/!{q1}; {s/.*github.com[:\/]([^\/]*\/[^\]*)$/\1/}')
 
     echo "using remote url ${ORIGIN_URL}"
     echo "this corresponds to the github repository at https://github.com/${REPO}"
