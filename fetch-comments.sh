@@ -76,7 +76,7 @@ trap 'echo "[ERROR] Error occurred at $BASH_SOURCE:$LINENO command: $BASH_COMMAN
 
 RETRY_TIME=1
 if [ -z "$RETRY_MAX_COUNT" ]; then
-    RETRY_MAX_COUNT=10
+    RETRY_MAX_COUNT=8
 fi
 
 #a fifo for tracking progress for each input url
