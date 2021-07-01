@@ -89,6 +89,7 @@ BEGIN {
     OFS="\t";
     #toggle this to output the actual code lines
     writeline = 0;
+    MAX_FILE_LENGTH = 128*1024; # 100k LOC is a lot
     if(codefile == "") {
         codefile = "/tmp/codefile";
     }
@@ -256,6 +257,12 @@ NR > 1 && /^merging / && $4 != lastfile {
 
     #copy up to and possibly including oldline
     copyend = (oldlen == 0) ? (oldline) : oldline-1;
+    if(newptr + copyend + newlen > MAX_FILE_LENGTH) {
+        print sprintf("got hunk that will make %s at least %d lines long, skipping file", filename, newptr + copyend + newlen) > "/dev/stderr";
+        skipfile = 1;
+        skipdiff = 1;
+    }
+
     for(;oldptr < copyend;) {
         newfilearr[newptr] = filearr[oldptr];
         newptr += 1;
